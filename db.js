@@ -3,18 +3,14 @@
  * Thay thế localStorage bằng Google Sheets qua Google Apps Script Web App.
  *
  * HƯỚNG DẪN THIẾT LẬP:
- * 1. Tạo Google Sheet mới tại https://sheets.google.com
- * 2. Vào Extensions > Apps Script
- * 3. Dán nội dung file Code.gs vào editor
- * 4. Bấm Deploy > New Deployment > Web App
- *    - Execute as: Me
- *    - Who has access: Anyone
- * 5. Copy URL Web App và dán vào APPS_SCRIPT_URL bên dưới
- * 6. Bấm Authorize khi được yêu cầu
+ * 1. Tạo file env.js (xem env.js mẫu) với APPS_SCRIPT_URL và SECRET_KEY thật
+ * 2. File env.js đã được .gitignore — không bao giờ lên GitHub
+ * 3. Mỗi thiết bị cần có file env.js riêng
  */
 
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxwOmUBG9va6ddJ2tySOJwAbPyHmuGg0Jr5dTDs9SL16Co2PShW0pdkxSqKeFp5BrwtrQ/exec"; // ← DÁN WEB APP URL VÀO ĐÂY
-                             // VD: "https://script.google.com/macros/s/AKfy.../exec"
+// Đọc từ env.js (không hardcode URL ở đây để tránh lộ lên GitHub)
+const APPS_SCRIPT_URL = (window.ENV && window.ENV.APPS_SCRIPT_URL) || "";
+const API_SECRET_KEY  = (window.ENV && window.ENV.SECRET_KEY)       || "";
 
 // ─── Kiểm tra đã cấu hình chưa ───────────────────────────────────────────────
 
@@ -72,7 +68,7 @@ async function apiPost(action, data) {
     const res = await fetch(APPS_SCRIPT_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain" }, // Apps Script yêu cầu text/plain để tránh preflight
-      body: JSON.stringify({ action, data })
+      body: JSON.stringify({ action, data, key: API_SECRET_KEY })
     });
     const json = await res.json();
     if (json.error) throw new Error(json.error);
@@ -93,7 +89,7 @@ async function apiGet() {
 
   showSyncStatus("syncing", "Đang tải dữ liệu...");
   try {
-    const url = APPS_SCRIPT_URL + "?action=getAllData&t=" + Date.now();
+    const url = APPS_SCRIPT_URL + "?action=getAllData&key=" + encodeURIComponent(API_SECRET_KEY) + "&t=" + Date.now();
     const res  = await fetch(url);
     const json = await res.json();
     if (json.error) throw new Error(json.error);
@@ -294,6 +290,7 @@ async function dbUploadImage(file, oldFileId = "") {
           headers: { "Content-Type": "text/plain" },
           body: JSON.stringify({
             action: "uploadImage",
+            key: API_SECRET_KEY,
             data: {
               base64:    base64,
               mimeType:  "image/webp",

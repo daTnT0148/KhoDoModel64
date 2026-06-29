@@ -3,8 +3,9 @@
  * Deploy as Web App: Execute as Me, Anyone can access
  */
 
-const SHEET_ID = "1VB01bVUDH-fBKwiS4JfOhiNSqsH37snzYZnHefq86Xs"; // ← DÁN SPREADSHEET ID VÀO ĐÂY
-const DRIVE_FOLDER_ID = "1eaGPgd7czUjSTBBXPsFJ1LT4ac4TlFHg?usp=drive_link"; // ← DÁN GOOGLE DRIVE FOLDER ID VÀO ĐÂY (để trống = lưu root)
+const SHEET_ID        = "1VB01bVUDH-fBKwiS4JfOhiNSqsH37snzYZnHefq86Xs";
+const DRIVE_FOLDER_ID = "1eaGPgd7czUjSTBBXPsFJ1LT4ac4TlFHg?usp=drive_link";
+const SECRET_KEY      = "khomodel64_2026_secret"; // ← PHẢI GIỐNG VỚI KEY TRONG env.js
 
 function getSpreadsheet() {
   return SHEET_ID
@@ -16,6 +17,14 @@ function getSpreadsheet() {
 
 function doGet(e) {
   const action = e && e.parameter && e.parameter.action ? e.parameter.action : "getAllData";
+  const key    = e && e.parameter && e.parameter.key ? e.parameter.key : "";
+
+  if (key !== SECRET_KEY) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ error: "Unauthorized" }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
   let result;
   try {
     if (action === "getAllData") result = getAllData();
@@ -37,6 +46,12 @@ function doPost(e) {
   }
 
   const action = body.action;
+  const key    = body.key || "";
+
+  if (key !== SECRET_KEY) {
+    return respond({ error: "Unauthorized" });
+  }
+
   let result;
 
   try {

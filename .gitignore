@@ -1,0 +1,9 @@
+# File cấu hình bí mật — KHÔNG push lên GitHub
+env.js
+
+# Thư mục ảnh sản phẩm (nặng, lưu local)
+images/
+
+# OS files
+.DS_Store
+Thumbs.db
