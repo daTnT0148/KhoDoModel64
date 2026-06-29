@@ -3,9 +3,9 @@
  * Deploy as Web App: Execute as Me, Anyone can access
  */
 
-const SHEET_ID        = "1VB01bVUDH-fBKwiS4JfOhiNSqsH37snzYZnHefq86Xs";
-const DRIVE_FOLDER_ID = "1eaGPgd7czUjSTBBXPsFJ1LT4ac4TlFHg?usp=drive_link";
-const SECRET_KEY      = "khomodel64_2026_secret"; // ← PHẢI GIỐNG VỚI KEY TRONG env.js
+const SHEET_ID        = "SpreadsheetApp.getActiveSpreadsheet().getId()";
+const DRIVE_FOLDER_ID = "YOUR_DRIVE_FOLDER_ID";
+const SECRET_KEY      = "YOUR_SECRET_KEY"; // ← PHẢI GIỐNG VỚI KEY TRONG env.js
 
 function getSpreadsheet() {
   return SHEET_ID
