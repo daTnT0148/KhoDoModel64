@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mô Hình 64 - Trình Quản Lý Kho & Mua Bán Xe 1:64</title>
+  <!-- Google Fonts: Outfit -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Custom Styling -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- App Container -->
+  <div class="app-container">
+    
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <span class="logo-icon">🏁</span>
+          <div class="logo-text">
+            <h2>MÔ HÌNH 64</h2>
+            <p>1:64 Portfolio Tracker</p>
+          </div>
+        </div>
+        <button class="close-sidebar-btn" id="closeSidebarBtn">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+
+      <!-- Portfolio Selector Card -->
+      <div class="portfolio-card">
+        <label for="portfolioSelect"><i data-lucide="folder"></i> Danh mục đầu tư</label>
+        <div class="portfolio-selector-wrapper">
+          <select id="portfolioSelect">
+            <!-- Nạp động qua JS -->
+          </select>
+          <button id="addPortfolioQuickBtn" title="Thêm danh mục mới">
+            <i data-lucide="plus"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Navigation Links -->
+      <nav class="sidebar-nav">
+        <ul>
+          <li>
+            <a href="#" class="nav-link active" data-tab="dashboard">
+              <i data-lucide="layout-dashboard"></i>
+              <span>Tổng quan</span>
+            </a>
+          </li>
+          <li>
+            <a href="#" class="nav-link" data-tab="inventory">
+              <i data-lucide="box"></i>
+              <span>Kho hàng</span>
+            </a>
+          </li>
+          <li>
+            <a href="#" class="nav-link" data-tab="transactions">
+              <i data-lucide="arrow-left-right"></i>
+              <span>Giao dịch Mua/Bán</span>
+            </a>
+          </li>
+          <li>
+            <a href="#" class="nav-link" data-tab="reports">
+              <i data-lucide="calendar"></i>
+              <span>Báo cáo năm</span>
+            </a>
+          </li>
+          <li>
+            <a href="#" class="nav-link" data-tab="settings">
+              <i data-lucide="settings"></i>
+              <span>Cài đặt</span>
+            </a>
+          </li>
+        </ul>
+      </nav>
+
+      <!-- Sidebar Footer -->
+      <div class="sidebar-footer">
+        <div class="user-profile">
+          <div class="avatar">AD</div>
+          <div class="user-info">
+            <span class="name">Collector / Trader</span>
+            <span class="status-online">Online</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      
+      <!-- Top Navbar -->
+      <header class="top-navbar">
+        <div class="nav-left">
+          <button class="menu-toggle-btn" id="menuToggleBtn">
+            <i data-lucide="menu"></i>
+          </button>
+          <h1 id="pageTitle">Tổng quan</h1>
+        </div>
+        <div class="nav-right">
+          <!-- Currency Switcher -->
+          <div class="currency-switcher">
+            <label for="currencySelect"><i data-lucide="coins"></i> Tiền tệ:</label>
+            <select id="currencySelect">
+              <option value="VND">VND (vnd)</option>
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+            </select>
+          </div>
+          <div class="quick-stats-badge">
+            <span class="badge-label">Tỷ giá giả định:</span>
+            <span class="badge-value">1 USD = 25.000 vnd</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- Scrollable Panels Container -->
+      <div class="panel-container">
+
+        <!-- ================= PANEL 1: DASHBOARD ================= -->
+        <section class="panel active" id="panel-dashboard">
+          
+          <!-- Quick Financial KPI Cards -->
+          <div class="kpi-grid">
+            <div class="kpi-card" id="kpi-total-inventory">
+              <div class="kpi-header">
+                <span class="kpi-title">Giá trị kho hiện tại</span>
+                <i data-lucide="box" class="icon-inventory"></i>
+              </div>
+              <h3 class="kpi-value" id="val-total-inventory">0 vnd</h3>
+              <p class="kpi-subtext" id="sub-total-inventory">Tổng số lượng: 0 chiếc xe</p>
+            </div>
+            <div class="kpi-card" id="kpi-total-cost">
+              <div class="kpi-header">
+                <span class="kpi-title">Tổng chi phí nhập kho</span>
+                <i data-lucide="shopping-cart" class="icon-cost"></i>
+              </div>
+              <h3 class="kpi-value" id="val-total-cost">0 vnd</h3>
+              <p class="kpi-subtext" id="sub-total-cost">Bao gồm cả xe đã bán</p>
+            </div>
+            <div class="kpi-card" id="kpi-total-revenue">
+              <div class="kpi-header">
+                <span class="kpi-title">Tổng doanh thu bán xe</span>
+                <i data-lucide="banknote" class="icon-revenue"></i>
+              </div>
+              <h3 class="kpi-value" id="val-total-revenue">0 vnd</h3>
+              <p class="kpi-subtext" id="sub-total-revenue">Đã bán: 0 chiếc xe</p>
+            </div>
+            <div class="kpi-card" id="kpi-net-profit">
+              <div class="kpi-header">
+                <span class="kpi-title">Lợi nhuận ròng thực tế</span>
+                <i data-lucide="trending-up" class="icon-profit"></i>
+              </div>
+              <h3 class="kpi-value" id="val-net-profit">0 vnd</h3>
+              <p class="kpi-subtext" id="sub-net-profit">Tỷ lệ ROI: 0.0%</p>
+              <div class="profit-breakdown">
+                <span>Hôm nay:<strong id="val-profit-today">0 vnd</strong></span>
+                <span>Tuần này:<strong id="val-profit-week">0 vnd</strong></span>
+                <span>Tháng này:<strong id="val-profit-month">0 vnd</strong></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Charts Row -->
+          <div class="chart-row">
+            <!-- Year-over-Year (YoY) Chart -->
+            <div class="chart-card chart-large">
+              <div class="chart-card-header">
+                <h3>Doanh thu & Chi phí theo các năm</h3>
+                <span class="chart-tag">Biểu đồ cột so sánh</span>
+              </div>
+              <div class="chart-wrapper">
+                <canvas id="yoyChart"></canvas>
+              </div>
+            </div>
+            
+            <!-- Side Charts (Pie & Doughnut) -->
+            <div class="chart-side-column">
+              <!-- Channels Breakdown -->
+              <div class="chart-card chart-small">
+                <div class="chart-card-header">
+                  <h3>Tỷ trọng kênh bán hàng</h3>
+                  <span class="chart-tag">Doanh thu</span>
+                </div>
+                <div class="chart-wrapper">
+                  <canvas id="channelChart"></canvas>
+                </div>
+              </div>
+
+              <!-- Brand Allocation -->
+              <div class="chart-card chart-small">
+                <div class="chart-card-header">
+                  <h3>Tỷ trọng theo hãng xe</h3>
+                  <span class="chart-tag">Số lượng xe</span>
+                </div>
+                <div class="chart-wrapper">
+                  <canvas id="brandChart"></canvas>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Profit Trend Chart Row -->
+          <div class="chart-row" style="grid-template-columns: 1fr; margin-bottom: 32px;">
+            <div class="chart-card">
+              <div class="chart-card-header">
+                <h3>Biến động Lợi nhuận</h3>
+                <div class="chart-actions">
+                  <button class="btn btn-secondary btn-sm chart-btn active" id="profitPeriodDay">Theo Ngày</button>
+                  <button class="btn btn-secondary btn-sm chart-btn" id="profitPeriodWeek">Theo Tuần</button>
+                  <button class="btn btn-secondary btn-sm chart-btn" id="profitPeriodMonth">Theo Tháng</button>
+                </div>
+              </div>
+              <div class="chart-wrapper" style="height: 300px;">
+                <canvas id="profitTrendChart"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <!-- Top Performing Models -->
+          <div class="dashboard-table-card">
+            <div class="card-header-actions">
+              <h3>Các mẫu xe bán chạy nhất (Lợi nhuận cao nhất)</h3>
+              <button class="btn btn-secondary btn-sm" id="goToInventoryBtn">Xem toàn bộ kho</button>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table" id="topModelsTable">
+                <thead>
+                  <tr>
+                    <th>Mẫu xe</th>
+                    <th>Hãng</th>
+                    <th>Số lượng đã bán</th>
+                    <th>Giá mua TB</th>
+                    <th>Doanh thu</th>
+                    <th>Lợi nhuận</th>
+                    <th>ROI</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <!-- Nạp động qua JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Slow Moving Models -->
+          <div class="dashboard-table-card" style="margin-top:20px;">
+            <div class="card-header-actions">
+              <h3>Các mẫu xe tồn lâu (Còn hàng, chưa bán được)</h3>
+            </div>
+            <div class="table-responsive">
+                <table class="data-table" id="slowModelsTable">
+                <thead>
+                  <tr>
+                    <th>Mẫu xe</th>
+                    <th>Hãng</th>
+                    <th>Tồn kho</th>
+                    <th>Ngày nhập lô tồn cũ nhất</th>
+                    <th>Số ngày tồn</th>
+                    <th>Giá mua TB</th>
+                    <th>Giá hòa vốn Shopee</th>
+                    <th>Giá trị tồn</th>
+                    <th>Mức cảnh báo</th>
+                  </tr>
+                </thead>
+                <tbody id="slowModelsTableBody">
+                  <!-- Nạp động qua JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </section>
+
+        <!-- ================= PANEL 2: INVENTORY ================= -->
+        <section class="panel" id="panel-inventory">
+
+          <!-- Shopee Profit Calculator -->
+          <div class="dashboard-table-card" id="shopeeCalcCard" style="margin-bottom:20px;">
+            <div class="card-header-actions">
+              <h3><i data-lucide="calculator"></i> Công cụ tính lợi nhuận Shopee</h3>
+              <span style="font-size:12px;color:var(--text-muted);">Thay đổi phí sẽ tự động cập nhật <strong>Giá hòa vốn</strong> cho tất cả xe trong kho</span>
+            </div>
+            <div class="shopee-calc-grid">
+              <div class="shopee-input-group">
+                <label>Giá bán thử (tham khảo)</label>
+                <div class="currency-input-wrapper">
+                  <input type="text" id="calcPrice" placeholder="Số tiền..." oninput="runShopeeCalc()">
+                  <span class="currency-addon">vnd</span>
+                </div>
+              </div>
+              <div class="shopee-input-group">
+                <label>Giá vốn (tham khảo)</label>
+                <div class="currency-input-wrapper">
+                  <input type="text" id="calcCogs" placeholder="Số tiền..." oninput="runShopeeCalc()">
+                  <span class="currency-addon">vnd</span>
+                </div>
+              </div>
+              <div class="shopee-input-group">
+                <label>Phí sàn (%)</label>
+                <input type="number" id="calcFee" min="0" max="100" step="0.1" oninput="runShopeeCalc(); syncFeeSettings()">
+              </div>
+              <div class="shopee-input-group">
+                <label>Phí kèm (vnd)</label>
+                <div class="currency-input-wrapper">
+                  <input type="text" id="calcExtra" placeholder="0" oninput="runShopeeCalc(); syncFeeSettings()">
+                  <span class="currency-addon">vnd</span>
+                </div>
+              </div>
+              <div class="shopee-input-group">
+                <label>Phí vận hành (vnd)</label>
+                <div class="currency-input-wrapper">
+                  <input type="text" id="calcOperation" placeholder="0" oninput="runShopeeCalc(); syncFeeSettings()">
+                  <span class="currency-addon">vnd</span>
+                </div>
+              </div>
+              <div class="shopee-input-group">
+                <label>Biên lợi nhuận mong muốn (%)</label>
+                <input type="number" id="calcTargetMargin" min="0" max="100" step="1" oninput="runShopeeCalc(); syncFeeSettings()">
+              </div>
+              <div class="shopee-results">
+                <div class="shopee-result-item" style="border-bottom: 1px dashed rgba(255,255,255,0.1); padding-bottom: 8px; margin-bottom: 8px;">
+                  <span>Giá bán mục tiêu</span>
+                  <div>
+                    <strong class="text-orange" id="calcTargetPrice" style="margin-right: 12px;">—</strong>
+                    <strong class="text-green" id="calcMargin">—</strong>
+                  </div>
+                </div>
+                <div class="shopee-result-item">
+                  <span>Tiền thu về</span>
+                  <strong class="text-green" id="calcRevenue">—</strong>
+                </div>
+                <div class="shopee-result-item">
+                  <span>Lợi nhuận</span>
+                  <strong class="text-green" id="calcProfit">—</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Filters and controls -->
+          <div class="filter-bar">
+            <div class="search-input-wrapper">
+              <i data-lucide="search"></i>
+              <input type="text" id="inventorySearchInput" placeholder="Tìm kiếm tên xe, ghi chú...">
+            </div>
+            
+            <div class="filter-controls">
+              <select id="filterBrandSelect">
+                <option value="all">Tất cả hãng</option>
+                <!-- Nạp động -->
+              </select>
+              
+              <select id="filterStockSelect">
+                <option value="all">Tất cả trạng thái kho</option>
+                <option value="in_stock">Còn hàng</option>
+                <option value="out_of_stock">Hết hàng</option>
+              </select>
+
+              <select id="sortSelect">
+                <option value="name_asc">Tên xe (A-Z)</option>
+                <option value="stock_desc">Số lượng tồn kho (Cao-Thấp)</option>
+                <option value="avg_cost_desc">Giá mua trung bình (Cao-Thấp)</option>
+                <option value="profit_desc">Lợi nhuận thực tế (Cao-Thấp)</option>
+                <option value="roi_desc">ROI (Cao-Thấp)</option>
+              </select>
+
+              <!-- View toggle buttons -->
+              <div class="view-toggle">
+                <button class="view-btn active" id="viewTableBtn" title="Xem dạng Bảng">
+                  <i data-lucide="list"></i>
+                </button>
+                <button class="view-btn" id="viewGridBtn" title="Xem dạng Lưới (Cards)">
+                  <i data-lucide="grid"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Inventory Content -->
+          <!-- Table View Container -->
+          <div class="inventory-table-container" id="inventoryTableContainer">
+            <div class="table-responsive">
+              <table class="data-table" id="inventoryTable">
+                <thead>
+                  <tr>
+                    <th style="width:70px;">Ảnh</th>
+                    <th>Tên xe & Hãng</th>
+                    <th>Tồn kho / Nhập</th>
+                    <th>Giá mua TB</th>
+                    <th>Giá hòa vốn Shopee</th>
+                    <th>Giá bán mục tiêu</th>
+                    <th>Tổng chi phí</th>
+                    <th>Đã bán / Giá bán TB</th>
+                    <th>Doanh thu</th>
+                    <th>Lợi nhuận ròng</th>
+                    <th>ROI (%)</th>
+                    <th>Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody id="inventoryTableBody">
+                  <!-- Nạp động qua JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Grid View Container (Hidden by default) -->
+          <div class="inventory-grid-container hidden" id="inventoryGridContainer">
+            <!-- Nạp động qua JS -->
+          </div>
+
+        </section>
+
+        <!-- ================= PANEL 3: TRANSACTIONS ================= -->
+        <section class="panel" id="panel-transactions">
+          
+          <div class="transaction-forms-row">
+            
+            <!-- BUY Form (Nhập Kho) -->
+            <div class="form-card">
+              <div class="card-header">
+                <h3><i data-lucide="plus-circle" class="text-green"></i> Ghi nhận Nhập hàng (Mua)</h3>
+                <p>Nhập thêm xe mới hoặc mua thêm xe cũ vào kho hàng.</p>
+              </div>
+              <form id="buyForm" class="styled-form">
+                <div class="form-group">
+                  <label for="buyModelName">Tên xe <span class="required">*</span></label>
+                  <div class="autocomplete-wrapper">
+                    <input type="text" id="buyModelName" placeholder="Ví dụ: Porsche 911 GT3 RS" required autocomplete="off">
+                    <div id="buyModelSuggestions" class="suggestions-list hidden"></div>
+                  </div>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="buyBrand">Hãng sản xuất (Gợi ý hoặc tự gõ hãng mới) <span class="required">*</span></label>
+                    <div class="autocomplete-wrapper">
+                      <input type="text" id="buyBrand" placeholder="Ví dụ: Mini GT" required autocomplete="off">
+                      <div id="buyBrandSuggestions" class="suggestions-list hidden"></div>
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label for="buyDate">Ngày mua <span class="required">*</span></label>
+                    <div class="datepicker-wrapper" id="buyDateWrapper">
+                      <input type="text" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
+                      <i data-lucide="calendar" class="datepicker-icon"></i>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="buyColor">Màu sắc (Gợi ý hoặc tự gõ màu mới)</label>
+                    <div class="autocomplete-wrapper">
+                      <input type="text" id="buyColor" placeholder="Ví dụ: Đỏ" autocomplete="off">
+                      <div id="buyColorSuggestions" class="suggestions-list hidden"></div>
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label for="buyPackaging">Đóng gói (Gợi ý hoặc tự gõ đóng gói mới)</label>
+                    <div class="autocomplete-wrapper">
+                      <input type="text" id="buyPackaging" placeholder="Ví dụ: Có hộp" autocomplete="off">
+                      <div id="buyPackagingSuggestions" class="suggestions-list hidden"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="buyQty">Số lượng <span class="required">*</span></label>
+                    <input type="number" id="buyQty" min="1" value="1" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="buyUnitCost">Giá mua / chiếc <span class="required">*</span></label>
+                    <div class="currency-input-wrapper">
+                      <input type="text" id="buyUnitCost" placeholder="Số tiền..." required>
+                      <span class="currency-addon" id="buyCurrencyAddon">vnd</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="form-group">
+                  <label for="buyNotes">Ghi chú (Tùy chọn)</label>
+                  <textarea id="buyNotes" rows="2" placeholder="Ví dụ: Card đẹp, nguyên seal, mua sỉ đợt tết..."></textarea>
+                </div>
+
+                <div class="form-group">
+                  <label>Hình ảnh sản phẩm (Tùy chọn)</label>
+                  <div class="img-upload-wrapper">
+                    <div class="img-preview-box" id="buyImgPreview">
+                      <i data-lucide="image" style="width:28px;height:28px;color:var(--text-muted);"></i>
+                      <span style="font-size:11px;color:var(--text-muted);margin-top:4px;">Chưa chọn ảnh</span>
+                    </div>
+                    <div class="img-upload-actions">
+                      <label for="buyImgFile" class="btn btn-secondary btn-sm" style="cursor:pointer;">
+                        <i data-lucide="upload" style="width:13px;height:13px;"></i> Chọn ảnh
+                      </label>
+                      <input type="file" id="buyImgFile" accept=".jpg,.jpeg,.png,.webp" style="display:none;">
+                      <button type="button" class="btn btn-sm" style="background:transparent;border:1px solid var(--card-border);color:var(--text-muted);" id="buyImgClear">Xóa ảnh</button>
+                    </div>
+                    <span style="font-size:11px;color:var(--text-muted);">JPG, JPEG, PNG, WEBP. Ảnh lưu trong thư mục <code>images/</code>.</span>
+                  </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block">
+                  <i data-lucide="plus"></i> Nhập hàng vào kho
+                </button>
+              </form>
+            </div>
+
+            <!-- SELL Form (Bán Kho) -->
+            <div class="form-card">
+              <div class="card-header">
+                <h3><i data-lucide="minus-circle" class="text-orange"></i> Ghi nhận Bán xe (Xuất Kho)</h3>
+                <p>Xuất bán xe hiện có trong kho và ghi nhận lợi nhuận.</p>
+              </div>
+              <form id="sellForm" class="styled-form">
+                <div class="form-group">
+                  <label for="sellModelInput">Chọn xe trong kho <span class="required">*</span></label>
+                  <div class="autocomplete-wrapper">
+                    <input type="text" id="sellModelInput" placeholder="Gõ tên xe, hãng, hoặc năm (VD: 1992)..." required autocomplete="off">
+                    <input type="hidden" id="sellModelSelect">
+                    <div id="sellModelSuggestions" class="suggestions-list hidden"></div>
+                  </div>
+                  <div class="info-bubble hidden" id="sellModelCostInfo">
+                    Giá mua trung bình: <strong id="sellAvgCostLabel">0 vnd</strong> | Hiện còn: <strong id="sellStockLabel">0 chiếc</strong>
+                  </div>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="sellChannel">Kênh bán hàng <span class="required">*</span></label>
+                    <select id="sellChannel" required>
+                      <option value="Facebook">Facebook</option>
+                      <option value="Shopee">Shopee</option>
+                      <option value="Trực tiếp">Trực tiếp (Offline)</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label for="sellDate">Ngày bán <span class="required">*</span></label>
+                    <div class="datepicker-wrapper" id="sellDateWrapper">
+                      <input type="text" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
+                      <i data-lucide="calendar" class="datepicker-icon"></i>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="sellQty">Số lượng bán <span class="required">*</span></label>
+                    <input type="number" id="sellQty" min="1" value="1" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="sellUnitPrice">Giá bán / chiếc <span class="required">*</span></label>
+                    <div class="currency-input-wrapper">
+                      <input type="text" id="sellUnitPrice" placeholder="Số tiền..." required>
+                      <span class="currency-addon" id="sellCurrencyAddon">vnd</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="form-group">
+                  <label for="sellNotes">Ghi chú (Tùy chọn)</label>
+                  <textarea id="sellNotes" rows="2" placeholder="Ví dụ: Khách thanh toán COD, freeship..."></textarea>
+                </div>
+
+                <button type="submit" class="btn btn-orange btn-block">
+                  <i data-lucide="shopping-bag"></i> Ghi nhận giao dịch bán
+                </button>
+              </form>
+            </div>
+
+          </div>
+
+          <!-- Transaction History Table -->
+          <div class="dashboard-table-card margin-top-lg">
+            <div class="card-header-actions">
+              <h3>Lịch sử giao dịch chi tiết (Mua & Bán)</h3>
+              <div class="header-filters">
+                <select id="historyFilterYear">
+                  <option value="all">Tất cả các năm</option>
+                  <!-- Nạp động qua JS -->
+                </select>
+                <select id="historyFilterType">
+                  <option value="all">Tất cả giao dịch</option>
+                  <option value="buy">Chỉ giao dịch Mua</option>
+                  <option value="sell">Chỉ giao dịch Bán</option>
+                </select>
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table" id="transactionHistoryTable">
+                <thead>
+                  <tr>
+                    <th>Ngày</th>
+                    <th>Loại</th>
+                    <th>Mẫu xe</th>
+                    <th>Hãng</th>
+                    <th>Số lượng</th>
+                    <th>Đơn giá</th>
+                    <th>Thành tiền</th>
+                    <th>Kênh bán / Chi tiết</th>
+                    <th>Hành động</th>
+                  </tr>
+                </thead>
+                <tbody id="transactionHistoryTableBody">
+                  <!-- Nạp động qua JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </section>
+
+        <!-- ================= PANEL 4: REPORTS ================= -->
+        <section class="panel" id="panel-reports">
+          
+          <!-- Financial YoY Overview -->
+          <div class="report-yoy-grid">
+            <div class="chart-card report-chart">
+              <div class="chart-card-header">
+                <h3>So sánh tài chính qua các năm</h3>
+                <p>Doanh thu, chi phí nhập kho và lợi nhuận ròng thực tế</p>
+              </div>
+              <div class="chart-wrapper-large">
+                <canvas id="yoyReportChart"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <!-- YoY Stats Table -->
+          <div class="dashboard-table-card margin-top-lg">
+            <div class="card-header-actions">
+              <h3>Bảng phân tích doanh thu & lợi nhuận hàng năm</h3>
+              <button class="btn btn-secondary btn-sm" id="exportReportCsvBtn">Xuất báo cáo</button>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table" id="yoyStatsTable">
+                <thead>
+                  <tr>
+                    <th>Năm</th>
+                    <th>Doanh thu (Bán)</th>
+                    <th>Chi phí vốn đã bán (COGS)</th>
+                    <th>Lợi nhuận ròng</th>
+                    <th>Số xe mua mới</th>
+                    <th>Số xe bán ra</th>
+                    <th>Hiệu suất ROI (%)</th>
+                  </tr>
+                </thead>
+                <tbody id="yoyStatsTableBody">
+                  <!-- Nạp động qua JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Channel & Brand Financial Insights -->
+          <div class="report-columns margin-top-lg">
+            
+            <div class="report-card">
+              <h3>Hiệu quả các kênh bán hàng</h3>
+              <div class="report-channel-list" id="reportChannelList">
+                <!-- Nạp động qua JS -->
+              </div>
+            </div>
+
+            <div class="report-card">
+              <h3>Nhận định tài chính tổng quan</h3>
+              <div class="insights-box" id="insightsBox">
+                <!-- Nạp động qua JS -->
+              </div>
+            </div>
+
+          </div>
+
+        </section>
+
+        <!-- ================= PANEL 5: SETTINGS ================= -->
+        <section class="panel" id="panel-settings">
+          
+          <div class="settings-grid">
+            
+            <!-- Portfolio management -->
+            <div class="settings-card">
+              <h3><i data-lucide="folder-open"></i> Quản lý danh mục đầu tư</h3>
+              <p class="settings-desc">Tạo nhiều danh mục độc lập để quản lý các lô hàng hoặc bộ sưu tập riêng biệt.</p>
+              
+              <div class="portfolio-manager-section">
+                <div class="list-portfolios" id="listPortfolios">
+                  <!-- Nạp động qua JS -->
+                </div>
+                <hr>
+                <div class="create-portfolio-form">
+                  <h4>Tạo danh mục mới:</h4>
+                  <div class="inline-form-group">
+                    <input type="text" id="newPortfolioNameInput" placeholder="Ví dụ: Hàng nhập sỉ Hot Wheels...">
+                    <button class="btn btn-primary" id="createNewPortfolioBtn">
+                      <i data-lucide="plus"></i> Tạo mới
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Backup & Restore -->
+            <div class="settings-card">
+              <h3><i data-lucide="database"></i> Nhập/Xuất & Lưu trữ dữ liệu</h3>
+              <p class="settings-desc">Toàn bộ dữ liệu đang lưu trong bộ nhớ trình duyệt của bạn. Bạn nên xuất file Excel để sao lưu định kỳ tránh mất dữ liệu.</p>
+              
+              <div class="settings-actions">
+                <button class="btn btn-secondary" id="exportBackupCsvBtn">
+                  <i data-lucide="download"></i> Xuất dữ liệu Excel (CSV)
+                </button>
+                
+                <div class="import-csv-wrapper">
+                  <label for="importCsvFile" class="btn btn-secondary-outline">
+                    <i data-lucide="upload"></i> Nhập dữ liệu từ CSV
+                  </label>
+                  <input type="file" id="importCsvFile" accept=".csv" class="hidden">
+                  <span class="file-name" id="importCsvFileName">Chưa chọn file</span>
+                </div>
+                
+                <button class="btn btn-primary" id="loadMockDataBtn">
+                  <i data-lucide="activity"></i> Nạp dữ liệu mô phỏng (2024-2026)
+                </button>
+
+                <button class="btn btn-danger" id="clearAllDataBtn">
+                  <i data-lucide="trash-2"></i> Xóa vĩnh viễn toàn bộ dữ liệu
+                </button>
+              </div>
+            </div>
+
+            <!-- Instructions for non-programmers -->
+            <div class="settings-card settings-card-full">
+              <h3><i data-lucide="help-circle"></i> Hướng dẫn sử dụng & Sao lưu Excel</h3>
+              <div class="tutorial-content">
+                <div class="tutorial-step">
+                  <strong>1. Cách tính Giá mua trung bình:</strong>
+                  <p>Khi bạn thêm một giao dịch Mua cho xe *A* với giá 100k, sau đó mua tiếp xe *A* với giá 120k, hệ thống sẽ tự lưu và hiển thị Giá trung bình của xe *A* là 110k. Khi bạn bán xe *A*, giá vốn để tính lợi nhuận sẽ tự động lấy giá trung bình 110k này làm mốc.</p>
+                </div>
+                <div class="tutorial-step">
+                  <strong>2. Cách tạo file CSV mẫu để nhập hàng loạt:</strong>
+                  <p>Hãy bấm nút <em>"Xuất dữ liệu Excel (CSV)"</em> trước để có một file CSV chuẩn mẫu. Mở file đó ra bằng Excel, nhập các cột tương tự rồi lưu lại ở định dạng CSV. Sau đó click <em>"Nhập dữ liệu từ CSV"</em> để nạp hàng loạt vào phần mềm.</p>
+                </div>
+                <div class="tutorial-step">
+                  <strong>3. Tải lại trang (F5):</strong>
+                  <p>Dữ liệu được lưu trữ tự động trên máy tính của bạn thông qua trình duyệt. F5 hay tắt máy đi bật lại dữ liệu vẫn được bảo lưu nguyên vẹn.</p>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+        </section>
+
+      </div>
+    </main>
+
+  </div>
+
+  <!-- Modal Chỉnh Sửa Giao Dịch -->
+  <div class="modal-backdrop hidden" id="editTxModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i data-lucide="edit-3"></i> Chỉnh sửa Giao dịch</h3>
+        <button class="modal-close-btn" id="closeEditModalBtn">&times;</button>
+      </div>
+      <form id="editTxForm" class="styled-form">
+        <input type="hidden" id="editTxId">
+        <input type="hidden" id="editTxType">
+        
+        <div class="form-row">
+          <div class="form-group">
+            <label>Mẫu xe</label>
+            <div class="autocomplete-wrapper">
+              <input type="text" id="editTxModelName" autocomplete="off">
+              <div id="editTxModelSuggestions" class="suggestions-list hidden"></div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Hãng sản xuất</label>
+            <input type="text" id="editTxBrand">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Màu sắc</label>
+            <input type="text" id="editTxColor">
+          </div>
+          <div class="form-group">
+            <label>Đóng gói</label>
+            <input type="text" id="editTxPackaging">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="editTxDate">Ngày giao dịch <span class="required">*</span></label>
+            <div class="datepicker-wrapper" id="editTxDateWrapper">
+              <input type="text" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
+              <i data-lucide="calendar" class="datepicker-icon"></i>
+            </div>
+          </div>
+          <div class="form-group" id="editTxChannelGroup">
+            <label for="editTxChannel">Kênh bán hàng <span class="required">*</span></label>
+            <select id="editTxChannel">
+              <option value="Facebook">Facebook</option>
+              <option value="Shopee">Shopee</option>
+              <option value="Trực tiếp">Trực tiếp</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="editTxQty">Số lượng <span class="required">*</span></label>
+            <input type="number" id="editTxQty" min="1" required>
+          </div>
+          <div class="form-group">
+            <label for="editTxPrice" id="editTxPriceLabel">Đơn giá <span class="required">*</span></label>
+            <div class="currency-input-wrapper">
+              <input type="text" id="editTxPrice" required>
+              <span class="currency-addon" id="editTxCurrencyAddon">vnd</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="editTxNotes">Ghi chú (Tùy chọn)</label>
+          <textarea id="editTxNotes" rows="2" placeholder="Chi tiết giao dịch..."></textarea>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="cancelEditModalBtn">Hủy bỏ</button>
+          <button type="submit" class="btn btn-primary" id="saveEditModalBtn">Lưu thay đổi</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Main JavaScript File -->
+  <script src="mock_db.js"></script>
+  <script src="db.js"></script>
+  <script src="app.js"></script>
+  <!-- Image Lightbox -->
+  <div id="imgLightbox" class="img-lightbox hidden" onclick="closeImgLightbox()">
+    <div class="img-lightbox-inner" onclick="event.stopPropagation()">
+      <button class="img-lightbox-close" onclick="closeImgLightbox()">&times;</button>
+      <img id="imgLightboxImg" src="" alt="Ảnh sản phẩm">
+      <div id="imgLightboxCaption" class="img-lightbox-caption"></div>
+    </div>
+  </div>
+
+</body>
+</html>
