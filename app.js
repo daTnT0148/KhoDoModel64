@@ -25,6 +25,39 @@ let state = {
     fee: 25,        // Phí sàn (%)
     extra: 4620,    // Phí kèm (vnd)
     operation: 5000 // Phí vận hành (vnd)
+  },
+  // --- MODULE THUẼ ---
+  tax: {
+    info: {
+      taxCode: '',
+      businessName: '',
+      address: ''
+    },
+    config: {
+      declarationTemplateName: '',
+      declarationTemplateLastUpdated: ''
+      // Nếu cần lưu file base64 thì thêm: declarationTemplateData: null
+    },
+    declarations: [
+      {
+        id: 'S1a-HKD',
+        title: 'Sổ chi tiết doanh thu bán hàng hóa, dịch vụ',
+        subtitle: 'Doanh thu ít hơn 500 triệu/năm',
+        note: '',
+        reportPeriod: { from: '', to: '' },
+        salesChannel: 'all',
+        available: true
+      },
+      {
+        id: 'S2a-HKD',
+        title: 'Sổ doanh thu bán hàng hóa, dịch vụ',
+        subtitle: 'Doanh thu nhiều hơn 500 triệu/năm và ít hơn 3 tỷ/năm',
+        note: '',
+        reportPeriod: { from: '', to: '' },
+        salesChannel: 'all',
+        available: true
+      }
+    ]
   }
 };
 
@@ -301,6 +334,28 @@ function loadStateFromLocalStorage() {
           state.feeSettings = { fee: 25, extra: 4620, operation: 5000, targetMargin: 10 };
         } else if (state.feeSettings.targetMargin === undefined) {
           state.feeSettings.targetMargin = 10;
+        }
+        // Đảm bảo dữ liệu Tax hợp lệ (migrate dữ liệu cũ không có tax)
+        if (!state.tax) {
+          state.tax = getDefaultTaxState();
+        } else {
+          // Migrate
+          if (!state.tax.info) state.tax.info = { taxCode: '', businessName: '', address: '' };
+          if (!state.tax.config) state.tax.config = { declarationTemplateName: '', declarationTemplateLastUpdated: '' };
+          
+          // MIGRATE: Chuyển dữ liệu base64 (rất nặng) ra khỏi state chính để tránh lag toàn app
+          if (state.tax.config.declarationTemplateData) {
+            localStorage.setItem('model_car_tax_template', state.tax.config.declarationTemplateData);
+            delete state.tax.config.declarationTemplateData;
+            localStorage.setItem("model_car_portfolio_state", JSON.stringify(state)); // lưu ngay lập tức
+          }
+
+          if (!state.tax.declarations || state.tax.declarations.length === 0) {
+            state.tax.declarations = getDefaultTaxState().declarations;
+          } else {
+            // Loại bỏ S3a-HKD nếu người dùng đã lưu phiên bản cũ có S3a
+            state.tax.declarations = state.tax.declarations.filter(d => d.id !== 'S3a-HKD');
+          }
         }
       }
     } catch (e) {
@@ -1136,6 +1191,11 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
 
   const filterType = document.getElementById("historyFilterType").value;
   const filterYear = document.getElementById("historyFilterYear").value;
+  const filterChannelEl = document.getElementById("historyFilterChannel");
+  const filterChannel = filterChannelEl ? filterChannelEl.value : "all";
+  const sortOrderEl = document.getElementById("historySort");
+  const sortOrder = sortOrderEl ? sortOrderEl.value : "desc";
+
   let txs = state.transactions[portfolioId] || [];
 
   // Nạp động danh sách các năm có giao dịch vào dropdown "Năm"
@@ -1157,8 +1217,16 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
     txs = txs.filter(tx => String(new Date(tx.date).getFullYear()) === filterYear);
   }
 
-  // Sắp xếp giao dịch mới nhất lên đầu
-  const sortedTxs = [...txs].sort((a, b) => new Date(b.date) - new Date(a.date));
+  // Lọc theo kênh bán (chỉ áp dụng cho giao dịch bán, giao dịch mua không có kênh nên luôn giữ lại nếu lọc "all")
+  if (filterChannel !== "all") {
+    txs = txs.filter(tx => tx.type === "sell" && tx.channel === filterChannel);
+  }
+
+  // Sắp xếp theo ngày theo lựa chọn (mới nhất / cũ nhất)
+  const sortedTxs = [...txs].sort((a, b) => {
+    const diff = new Date(a.date) - new Date(b.date);
+    return sortOrder === "asc" ? diff : -diff;
+  });
 
   if (sortedTxs.length === 0) {
     tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted" style="padding: 30px 0;">Chưa ghi nhận giao dịch nào.</td></tr>`;
@@ -1169,8 +1237,14 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
     const row = document.createElement("tr");
     
     const isBuy = tx.type === "buy";
-    const unitPrice = isBuy ? Number(tx.unitCost) : Number(tx.unitPrice);
-    const totalAmount = Number(tx.qty) * unitPrice;
+    // Với giao dịch bán qua Shopee: nếu có taxUnitPrice (giá đăng bán/doanh thu Shopee) thì ưu tiên hiển thị giá này
+    const isShopee = !isBuy && tx.channel === "Shopee";
+    const displayUnitPrice = isBuy
+      ? Number(tx.unitCost)
+      : (isShopee && tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null && tx.taxUnitPrice > 0)
+        ? Number(tx.taxUnitPrice)
+        : Number(tx.unitPrice);
+    const totalAmount = Number(tx.qty) * displayUnitPrice;
     
     let detailHtml = "";
     if (isBuy) {
@@ -1179,11 +1253,14 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
       // Bán: Hiển thị kênh bán + Lợi nhuận của đơn bán này dựa trên giá mua trung bình
       const key = `${tx.modelName.toLowerCase()}||${tx.brand.toLowerCase()}||${(tx.color || "").toLowerCase()}||${(tx.packaging || "").toLowerCase()}`;
       const avgCost = avgCostMap[key] || 0;
-      const profitFromThisTx = Number(tx.qty) * (unitPrice - avgCost);
+      // Lợi nhuận thực tế luôn tính trên unitPrice thực nhận (không phải giá khai Shopee)
+      const actualUnitPrice = Number(tx.unitPrice);
+      const profitFromThisTx = Number(tx.qty) * (actualUnitPrice - avgCost);
 
       detailHtml = `
         <div style="display:flex; flex-direction:column;">
           <span class="badge badge-in-stock" style="align-self: flex-start; margin-bottom: 2px;">Kênh: ${tx.channel}</span>
+          ${isShopee && tx.taxUnitPrice ? `<span style="font-size:10px;color:var(--text-muted);">Giá thực nhận: ${formatCurrency(actualUnitPrice)}</span>` : ''}
           <span style="font-size:11px;" class="${profitFromThisTx >= 0 ? 'text-green' : 'text-danger'}">
             Lời: ${formatCurrency(profitFromThisTx)}
           </span>
@@ -1213,13 +1290,18 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
       </td>
       <td>${tx.brand}</td>
       <td class="text-center text-bold">${tx.qty}</td>
-      <td>${formatCurrency(unitPrice)}</td>
+      <td>${formatCurrency(displayUnitPrice)}</td>
       <td class="text-bold">${formatCurrency(totalAmount)}</td>
       <td>${detailHtml}</td>
       <td>
-        <button class="btn btn-secondary btn-sm" onclick="deleteTransaction('${tx.id}')" title="Xóa giao dịch này" style="color:var(--danger); border-color: rgba(239,68,68,0.2);">
-          <i data-lucide="trash-2" style="width:12px; height:12px;"></i>
-        </button>
+        <div style="display:flex; gap:6px;">
+          <button class="btn btn-secondary btn-sm" onclick="openEditTxModal('${tx.id}')" title="Sửa giao dịch này">
+            <i data-lucide="pencil" style="width:12px; height:12px;"></i>
+          </button>
+          <button class="btn btn-secondary btn-sm" onclick="deleteTransaction('${tx.id}')" title="Xóa giao dịch này" style="color:var(--danger); border-color: rgba(239,68,68,0.2);">
+            <i data-lucide="trash-2" style="width:12px; height:12px;"></i>
+          </button>
+        </div>
       </td>
     `;
     tbody.appendChild(row);
@@ -1456,86 +1538,27 @@ function getKnownBrands() {
 
 // --- VẼ BIỂU ĐỒ BẰNG CHART.JS (VISUALIZATIONS) ---
 
-// Vẽ/Cập nhật biểu đồ cột Doanh thu & Chi phí theo Năm
+// Vẽ/Cập nhật biểu đồ cột Doanh thu & Chi phí theo Năm (Đã chuyển thành Widget Doanh thu tổng năm nay)
 function drawYoYChart(chartId, yearlyStats) {
-  const ctx = document.getElementById(chartId).getContext("2d");
+  const currentYear = new Date().getFullYear().toString();
+  const txs = state.transactions[state.activePortfolioId] || [];
   
-  // Hủy biểu đồ cũ nếu đã tồn tại để tránh xung đột đè dữ liệu
-  if (charts[chartId]) {
-    charts[chartId].destroy();
-  }
-
-  const years = yearlyStats.map(s => s.year.toString());
-  // Doanh thu
-  const revenues = yearlyStats.map(s => s.revenue);
-  // Chi phí (Giá vốn COGS)
-  const costs = yearlyStats.map(s => s.cogs);
-  // Tiền mặt chi mua xe mới
-  const purchaseCosts = yearlyStats.map(s => s.purchaseCost);
-
-  charts[chartId] = new Chart(ctx, {
-    type: "bar",
-    data: {
-      labels: years.length > 0 ? years : ["Chưa có dữ liệu"],
-      datasets: [
-        {
-          label: "Doanh thu bán ra (VND)",
-          data: revenues.length > 0 ? revenues : [0],
-          backgroundColor: "#10b981", // Emerald green
-          borderColor: "#059669",
-          borderWidth: 1,
-          borderRadius: 4,
-          barPercentage: 0.6,
-          categoryPercentage: 0.8
-        },
-        {
-          label: "Chi phí vốn hàng bán (VND)",
-          data: costs.length > 0 ? costs : [0],
-          backgroundColor: "#f97316", // Orange
-          borderColor: "#ea580c",
-          borderWidth: 1,
-          borderRadius: 4,
-          barPercentage: 0.6,
-          categoryPercentage: 0.8
-        }
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          labels: { color: "#9ca3af", font: { family: "Outfit" } },
-          position: "top"
-        },
-        tooltip: {
-          titleFont: { family: "Outfit" },
-          bodyFont: { family: "Outfit" },
-          callbacks: {
-            label: function(context) {
-              return context.dataset.label.split("(")[0] + ": " + formatCurrency(context.raw);
-            }
-          }
-        }
-      },
-      scales: {
-        x: {
-          grid: { display: false },
-          ticks: { color: "#9ca3af", font: { family: "Outfit" } }
-        },
-        y: {
-          grid: { color: "rgba(255, 255, 255, 0.05)" },
-          ticks: {
-            color: "#9ca3af",
-            font: { family: "Outfit" },
-            callback: function(value) {
-              return formatCurrency(value);
-            }
-          }
-        }
-      }
+  let totalRevenueThisYear = 0;
+  
+  txs.forEach(tx => {
+    if (tx.type === "sell" && tx.date && tx.date.startsWith(currentYear)) {
+      // Ưu tiên Giá đăng bán Shopee (taxUnitPrice), nếu không có thì lấy Lợi nhuận (unitPrice)
+      let finalPriceSource = tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null ? tx.taxUnitPrice : tx.unitPrice;
+      const price = parseFloat(String(finalPriceSource || '0').replace(/[^0-9.-]+/g, '')) || 0;
+      const qty = Number(tx.qty) || 1;
+      totalRevenueThisYear += price * qty;
     }
   });
+
+  const valEl = document.getElementById("val-yearly-revenue");
+  if (valEl) {
+    valEl.innerText = formatCurrency(totalRevenueThisYear);
+  }
 }
 
 // Biểu đồ tròn cơ cấu kênh bán hàng
@@ -1686,7 +1709,7 @@ function drawBrandChart(inventoryList) {
 
 // --- LOGIC ĐIỀU HƯỚNG TAB ---
 function setupTabNavigation() {
-  const navLinks = document.querySelectorAll(".nav-link");
+  const navLinks = document.querySelectorAll(".nav-link:not(.nav-link-parent)");
   const panels = document.querySelectorAll(".panel");
   const pageTitle = document.getElementById("pageTitle");
 
@@ -1716,10 +1739,28 @@ function setupTabNavigation() {
         renderTransactionHistoryTable(state.activePortfolioId, inv);
       }
 
+      // Render Tax panels khi chuyển sang các tab thuế
+      if (targetTab === "tax-info") renderTaxInfo();
+      if (targetTab === "tax-declarations") renderTaxDeclarations();
+      if (targetTab === "tax-config") renderTaxConfig();
+
       // Cập nhật lại biểu đồ khi chuyển tab để tránh lỗi hiển thị kích thước
       triggerChartsRefresh();
     });
   });
+
+  // Tax parent toggle (expand/collapse submenu)
+  const taxToggle = document.getElementById("taxNavToggle");
+  const taxSubmenu = document.getElementById("taxSubmenu");
+  const taxChevron = document.getElementById("taxNavChevron");
+  if (taxToggle && taxSubmenu) {
+    taxToggle.addEventListener("click", (e) => {
+      e.preventDefault();
+      const isOpen = !taxSubmenu.classList.contains("hidden");
+      taxSubmenu.classList.toggle("hidden");
+      if (taxChevron) taxChevron.style.transform = isOpen ? "rotate(0deg)" : "rotate(90deg)";
+    });
+  }
 
   // Tăng cường điều hướng từ Dashboard sang Kho
   document.getElementById("goToInventoryBtn").addEventListener("click", () => {
@@ -2299,15 +2340,42 @@ function setupFormSubmissions() {
     refreshApplicationData();
   });
 
+  // Toggle UI field cho Shopee Revenue
+  const sellChannelEl = document.getElementById("sellChannel");
+  const taxGroupEl = document.getElementById("sellTaxUnitPriceGroup");
+  const unitPriceLabel = document.getElementById("sellUnitPriceLabel");
+  
+  sellChannelEl.addEventListener("change", (e) => {
+    if (e.target.value === "Shopee") {
+      taxGroupEl.style.display = "block";
+      unitPriceLabel.innerHTML = 'Lợi nhuận thực tế / chiếc <span class="required">*</span>';
+    } else {
+      taxGroupEl.style.display = "none";
+      unitPriceLabel.innerHTML = 'Giá bán / chiếc <span class="required">*</span>';
+      document.getElementById("sellTaxUnitPrice").value = "";
+    }
+  });
+
   // FORM BÁN HÀNG (SELL)
   sellForm.addEventListener("submit", (e) => {
     e.preventDefault();
 
     const modelSelectVal = document.getElementById("sellModelSelect").value;
-    const channel = document.getElementById("sellChannel").value;
+    const channel = sellChannelEl.value;
     const date = window.datePickers.sellDate.getValue();
     const qty = Number(document.getElementById("sellQty").value);
     const unitPrice = getNumericValue(document.getElementById("sellUnitPrice").value);
+    
+    // Đọc giá trị taxUnitPrice (chỉ dùng cho Shopee)
+    let taxUnitPrice = null;
+    if (channel === "Shopee") {
+      taxUnitPrice = getNumericValue(document.getElementById("sellTaxUnitPrice").value);
+      if (taxUnitPrice <= 0) {
+        alert("Vui lòng nhập Giá đăng bán Shopee để tính thuế!");
+        return;
+      }
+    }
+
     const notes = document.getElementById("sellNotes").value.trim();
 
     if (!modelSelectVal || !channel || !date || qty <= 0 || unitPrice < 0) {
@@ -2341,6 +2409,7 @@ function setupFormSubmissions() {
       sku: generateSKU(brand, modelName, color, packaging),
       qty,
       unitPrice,
+      taxUnitPrice, // Lưu thêm trường thuế
       date,
       channel,
       notes
@@ -2349,6 +2418,9 @@ function setupFormSubmissions() {
     state.transactions[state.activePortfolioId].push(newTx);
     dbSaveTransaction(newTx);
     sellForm.reset();
+    
+    taxGroupEl.style.display = "none"; // Reset form UI
+    unitPriceLabel.innerHTML = 'Giá bán / chiếc <span class="required">*</span>';
     
     // Đặt lại ngày mặc định là hôm nay
     window.datePickers.sellDate.setValue(dateToISO(new Date()));
@@ -2911,6 +2983,22 @@ function setupInteractiveFilters() {
     const inventory = calculateInventory(state.activePortfolioId);
     renderTransactionHistoryTable(state.activePortfolioId, inventory);
   });
+
+  const historyFilterChannelEl = document.getElementById("historyFilterChannel");
+  if (historyFilterChannelEl) {
+    historyFilterChannelEl.addEventListener("change", () => {
+      const inventory = calculateInventory(state.activePortfolioId);
+      renderTransactionHistoryTable(state.activePortfolioId, inventory);
+    });
+  }
+
+  const historySortEl = document.getElementById("historySort");
+  if (historySortEl) {
+    historySortEl.addEventListener("change", () => {
+      const inventory = calculateInventory(state.activePortfolioId);
+      renderTransactionHistoryTable(state.activePortfolioId, inventory);
+    });
+  }
 }
 
 // --- BIỂU ĐỒ LỢI NHUẬN THỜI GIAN & MODAL CHỈNH SỬA ---
@@ -3267,16 +3355,39 @@ function openEditTxModal(txId) {
 
   const channelGroup = document.getElementById("editTxChannelGroup");
   const channelSelect = document.getElementById("editTxChannel");
+  const taxGroup = document.getElementById("editTxTaxUnitPriceGroup");
+  const taxInput = document.getElementById("editTxTaxUnitPrice");
 
   if (tx.type === "sell") {
     channelGroup.style.display = "block";
     channelSelect.value = tx.channel || "Facebook";
     channelSelect.required = true;
     document.getElementById("editTxPriceLabel").innerHTML = "Giá bán / chiếc <span class='required'>*</span>";
+
+    // Hiện ô "Giá đăng bán Shopee" nếu kênh là Shopee, đồng thời nạp giá trị đã lưu (nếu có)
+    if (tx.channel === "Shopee") {
+      taxGroup.style.display = "block";
+      taxInput.value = tx.taxUnitPrice ? formatNumberInput(tx.taxUnitPrice.toString()) : "";
+    } else {
+      taxGroup.style.display = "none";
+      taxInput.value = "";
+    }
+
+    // Tự động hiện/ẩn ô này khi người dùng đổi kênh bán ngay trong modal
+    channelSelect.onchange = () => {
+      if (channelSelect.value === "Shopee") {
+        taxGroup.style.display = "block";
+      } else {
+        taxGroup.style.display = "none";
+        taxInput.value = "";
+      }
+    };
   } else {
     channelGroup.style.display = "none";
     channelSelect.required = false;
     document.getElementById("editTxPriceLabel").innerHTML = "Giá mua / chiếc <span class='required'>*</span>";
+    taxGroup.style.display = "none";
+    taxInput.value = "";
   }
 
   document.getElementById("editTxNotes").value = tx.notes || "";
@@ -3355,7 +3466,16 @@ function setupEditTxModalHandlers() {
         txs[txIndex].unitCost = price;
       } else {
         txs[txIndex].unitPrice = price;
-        txs[txIndex].channel = document.getElementById("editTxChannel").value;
+        const newChannel = document.getElementById("editTxChannel").value;
+        txs[txIndex].channel = newChannel;
+
+        // Cập nhật giá đăng bán Shopee nếu kênh là Shopee, ngược lại xóa trường này
+        if (newChannel === "Shopee") {
+          const taxVal = getNumericValue(document.getElementById("editTxTaxUnitPrice").value);
+          txs[txIndex].taxUnitPrice = taxVal > 0 ? taxVal : null;
+        } else {
+          txs[txIndex].taxUnitPrice = null;
+        }
       }
       txs[txIndex].notes = notes;
       txs[txIndex].sku = generateSKU(brand, modelName, color, packaging);
@@ -3879,6 +3999,1098 @@ function initDatePicker(wrapperId) {
   };
 }
 
+
+// ============================================================
+// MODULE THUẼ — Hàm tiện ích và tất cả logic kê khai thuế
+// ============================================================
+
+// Trạng thái tax mặc định
+function getDefaultTaxState() {
+  return {
+    info: { taxCode: '', businessName: '', address: '' },
+    config: { declarationTemplateName: '', declarationTemplateLastUpdated: '' },
+    declarations: [
+      {
+        id: 'S1a-HKD',
+        title: 'Sổ chi tiết doanh thu bán hàng hóa, dịch vụ',
+        subtitle: 'Doanh thu ít hơn 500 triệu/năm',
+        note: '', reportPeriod: { from: '', to: '' }, salesChannel: 'all', available: true
+      },
+      {
+        id: 'S2a-HKD',
+        title: 'Sổ doanh thu bán hàng hóa, dịch vụ',
+        subtitle: 'Doanh thu nhiều hơn 500 triệu/năm và ít hơn 3 tỷ/năm',
+        note: '', reportPeriod: { from: '', to: '' }, salesChannel: 'all', available: true
+      }
+    ]
+  };
+}
+
+// --- Render: Thông Tin ---
+function renderTaxInfo() {
+  const info = (state.tax && state.tax.info) || {};
+  const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+  setVal('taxCodeInput', info.taxCode);
+  setVal('taxBusinessNameInput', info.businessName);
+  setVal('taxAddressInput', info.address);
+  lucide.createIcons();
+}
+
+// --- Save: Thông Tin ---
+function saveTaxInfo() {
+  if (!state.tax) state.tax = getDefaultTaxState();
+  state.tax.info.taxCode      = (document.getElementById('taxCodeInput') || {}).value.trim();
+  state.tax.info.businessName = (document.getElementById('taxBusinessNameInput') || {}).value.trim();
+  state.tax.info.address      = (document.getElementById('taxAddressInput') || {}).value.trim();
+  saveStateToLocalStorage();
+  alert('Đã lưu thông tin thuế thành công!');
+}
+
+// --- Render: Tờ Khai List ---
+function renderTaxDeclarations() {
+  const declarations = (state.tax && state.tax.declarations) || [];
+  const grid = document.getElementById('taxDeclarationGrid');
+  if (!grid) return;
+
+  // Hiển thị thông tin file mẫu nếu có
+  const statusBadge = document.getElementById('taxTemplateStatusBadge');
+  if (statusBadge) {
+    const tplName = state.tax && state.tax.config && state.tax.config.declarationTemplateName;
+    statusBadge.innerHTML = tplName
+      ? `<span style="background:rgba(16,185,129,0.1);color:var(--green);padding:3px 10px;border-radius:99px;font-weight:600;">&#x2714; Đang dùng file mẫu: ${tplName}</span>`
+      : `<span style="color:var(--text-muted);">Chưa cấu hình file mẫu &mdash; vào <b>Cấu hình</b> để tải lên</span>`;
+  }
+
+  const icons = [
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:48px;height:48px;color:#6366f1"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`,
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:48px;height:48px;color:#6366f1"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>`,
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:48px;height:48px;color:#94a3b8"><rect x="14" y="2" width="7" height="7" rx="1"/><rect x="3" y="2" width="7" height="7" rx="1"/><rect x="14" y="15" width="7" height="7" rx="1"/><rect x="3" y="15" width="7" height="7" rx="1"/></svg>`
+  ];
+
+  grid.innerHTML = declarations.map((decl, idx) => {
+    const period = decl.reportPeriod;
+    const hasPeriod = period && period.from && period.to;
+    const statusHtml = hasPeriod
+      ? `<span class="badge badge-in-stock" style="font-size:10px;margin-top:8px;">Kỳ: ${period.from} → ${period.to}</span>`
+      : '';
+    const lockedOverlay = !decl.available
+      ? `<div class="tax-card-locked"><span> Sắp ra mắt </span></div>`
+      : '';
+    const clickAttr = decl.available ? `onclick="openTaxDeclarationDetail('${decl.id}')"` : '';
+    return `
+      <div class="tax-declaration-card ${decl.available ? 'tax-card-available' : 'tax-card-locked-wrap'}" ${clickAttr}>
+        ${lockedOverlay}
+        <div class="tax-card-badge">${decl.id}</div>
+        <div class="tax-card-icon">${icons[idx] || ''}</div>
+        <div class="tax-card-title">${decl.title}</div>
+        <div class="tax-card-subtitle">${decl.subtitle}</div>
+        ${statusHtml}
+        ${decl.note ? `<div class="tax-card-note">${decl.note}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+
+  lucide.createIcons();
+}
+
+// --- Mở chi tiết tờ khai ---
+let _activeTaxDeclarationId = null;
+
+function openTaxDeclarationDetail(id) {
+  const declarations = (state.tax && state.tax.declarations) || [];
+  const decl = declarations.find(d => d.id === id);
+  if (!decl) return;
+
+  _activeTaxDeclarationId = id;
+
+  document.getElementById('taxDeclarationsListView').classList.add('hidden');
+  document.getElementById('taxDeclarationDetailView').classList.remove('hidden');
+
+  document.getElementById('taxDetailTitle').innerText = `${decl.id}: ${decl.title}`;
+  document.getElementById('taxDetailSubtitle').innerText = decl.subtitle;
+  document.getElementById('taxDetailBadge').innerHTML =
+    `<span class="badge" style="background:rgba(99,102,241,0.15);color:#a5b4fc;font-size:12px;padding:4px 12px;">${decl.id}</span>`;
+  document.getElementById('taxDetailNote').value = decl.note || '';
+  document.getElementById('taxDetailChannel').value = decl.salesChannel || 'all';
+  document.getElementById('taxDetailPeriodError').style.display = 'none';
+
+  // Init datepickers cho detail view nếu chưa được init
+  if (!window.taxDatePickers) {
+    window.taxDatePickers = {
+      from: initDatePicker('taxDetailFromWrapper'),
+      to:   initDatePicker('taxDetailToWrapper')
+    };
+  }
+  window.taxDatePickers.from.setValue(decl.reportPeriod.from || '');
+  window.taxDatePickers.to.setValue(decl.reportPeriod.to || '');
+
+  lucide.createIcons();
+}
+
+// --- Đóng chi tiết tờ khai ---
+function closeTaxDeclarationDetail() {
+  _activeTaxDeclarationId = null;
+  document.getElementById('taxDeclarationsListView').classList.remove('hidden');
+  document.getElementById('taxDeclarationDetailView').classList.add('hidden');
+  renderTaxDeclarations();
+}
+
+// --- Logic Lấy Dữ Liệu Bán Hàng ---
+function getFilteredSalesTransactions(reportFrom, reportTo, salesChannel) {
+  const txs = state.transactions[state.activePortfolioId] || [];
+  return txs.filter(tx => {
+    if (tx.type !== 'sell') return false;
+    
+    if (reportFrom && reportTo) {
+      if (tx.date < reportFrom || tx.date > reportTo) return false;
+    }
+    
+    if (salesChannel && salesChannel !== 'all') {
+      if (tx.channel !== salesChannel) return false;
+    }
+    
+    return true;
+  }).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+}
+
+// --- Tạo Payload S1a-HKD ---
+function buildS1aExportPayload(taxInfo, decl, txs) {
+  const rows = txs.map(tx => {
+    let finalPrice = tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null ? tx.taxUnitPrice : tx.unitPrice;
+    return {
+      date: tx.date,
+      description: `Bán ${tx.qty} xe ${tx.modelName} ${tx.brand}`,
+      amount: Number(finalPrice) * Number(tx.qty)
+    };
+  });
+  
+  const totalAmount = rows.reduce((sum, r) => sum + r.amount, 0);
+
+  return {
+    templateId: 'S1a-HKD',
+    taxInfo: taxInfo,
+    period: decl.reportPeriod,
+    rows: rows,
+    totalAmount: totalAmount
+  };
+}
+
+// --- Tạo Payload S2a-HKD ---
+function buildS2aExportPayload(taxInfo, decl, txs) {
+  const rows = txs.map(tx => {
+    let finalPrice = tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null ? tx.taxUnitPrice : tx.unitPrice;
+    return {
+      refId: tx.id || `TX-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+      date: tx.date,
+      description: `Bán ${tx.qty} xe ${tx.modelName} ${tx.brand}`,
+      amount: Number(finalPrice) * Number(tx.qty)
+    };
+  });
+  
+  const totalAmount = rows.reduce((sum, r) => sum + r.amount, 0);
+
+  return {
+    templateId: 'S2a-HKD',
+    taxInfo: taxInfo,
+    period: decl.reportPeriod,
+    rows: rows,
+    totalAmount: totalAmount
+  };
+}
+
+// --- Xem trước tờ khai ---
+function previewTaxDeclaration() {
+  const targetId = _activeTaxDeclarationId;
+  if (!targetId || !state.tax) return;
+  const declarations = state.tax.declarations || [];
+  const decl = declarations.find(d => d.id === targetId);
+  if (!decl) return;
+
+  const fromVal = window.taxDatePickers ? window.taxDatePickers.from.getValue() : '';
+  const toVal   = window.taxDatePickers ? window.taxDatePickers.to.getValue()   : '';
+
+  // Kiểm tra kỳ báo cáo tối đa 1 năm
+  const errEl = document.getElementById('taxDetailPeriodError');
+  if (fromVal && toVal) {
+    const parseDate = (iso) => {
+      if (!iso) return null;
+      const p = iso.split('-');
+      if (p.length === 3) return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+      return null;
+    };
+    const dFrom = parseDate(fromVal), dTo = parseDate(toVal);
+    if (dFrom && dTo) {
+      const diffMs = dTo - dFrom;
+      const oneYearMs = 366 * 24 * 60 * 60 * 1000;
+      if (diffMs < 0) {
+        errEl.innerText = '⚠ Ngày kết thúc phải sau ngày bắt đầu.';
+        errEl.style.display = 'block';
+        return;
+      }
+      if (diffMs > oneYearMs) {
+        errEl.innerText = '⚠ Kỳ báo cáo không được vượt quá 1 năm.';
+        errEl.style.display = 'block';
+        return;
+      }
+    }
+  }
+  errEl.style.display = 'none';
+
+  // Lưu lại các thông số cấu hình đã nhập vào state
+  decl.reportPeriod.from = fromVal || '';
+  decl.reportPeriod.to   = toVal   || '';
+  decl.salesChannel = document.getElementById('taxDetailChannel').value;
+  decl.note         = document.getElementById('taxDetailNote').value.trim();
+  saveStateToLocalStorage();
+
+  // Bắt đầu trích xuất dữ liệu để build preview
+  const txs = getFilteredSalesTransactions(decl.reportPeriod.from, decl.reportPeriod.to, decl.salesChannel);
+  const taxInfo = state.tax.info;
+  
+  const printArea = document.getElementById('taxPrintArea');
+  if (printArea) {
+    printArea.innerHTML = generateTaxPreviewHtml(decl, taxInfo, txs);
+  }
+
+  // Hiển thị modal
+  document.getElementById('taxPreviewModal').classList.remove('hidden');
+}
+
+function closeTaxPreview() {
+  document.getElementById('taxPreviewModal').classList.add('hidden');
+}
+
+function generateTaxPreviewHtml(decl, info, txs) {
+  const formatDate = (iso) => {
+    if (!iso) return '...';
+    const p = iso.split('-');
+    if (p.length === 3) return `${p[2]}/${p[1]}/${p[0]}`;
+    return iso;
+  };
+
+  let periodStr = `Kỳ kê khai: .......................................`;
+  if (decl.reportPeriod.from && decl.reportPeriod.to) {
+    const fromParts = decl.reportPeriod.from.split('-');
+    const toParts = decl.reportPeriod.to.split('-');
+    if (fromParts.length === 3 && toParts.length === 3 &&
+        fromParts[0] === toParts[0] &&
+        fromParts[1] === '01' && fromParts[2] === '01' &&
+        toParts[1] === '12' && toParts[2] === '31') {
+      periodStr = `Kỳ kê khai: Năm ${fromParts[0]}`;
+    } else {
+      periodStr = `Kỳ kê khai: ${formatDate(decl.reportPeriod.from)} đến ${formatDate(decl.reportPeriod.to)}`;
+    }
+  }
+
+  const dateNow = new Date();
+  
+  let rowsHtml = '';
+  let totalAmt = 0;
+  
+  // Gom nhóm giao dịch theo ngày
+  const txsByDate = {};
+  txs.forEach(tx => {
+    let finalPriceSource = tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null ? tx.taxUnitPrice : tx.unitPrice;
+    let priceStr = String(finalPriceSource || '0').replace(/[^0-9.-]+/g, "");
+    let price = parseFloat(priceStr) || 0;
+    let qty = Number(tx.qty) || 1;
+    let amt = price * qty;
+    
+    if (!txsByDate[tx.date]) {
+      txsByDate[tx.date] = 0;
+    }
+    txsByDate[tx.date] += amt;
+  });
+  
+  const groupedDates = Object.keys(txsByDate).sort();
+  groupedDates.forEach(date => {
+    const amt = txsByDate[date];
+    totalAmt += amt;
+    rowsHtml += `
+      <tr>
+        <td style="text-align:center;">${formatDate(date)}</td>
+        <td>Doanh thu bán hàng</td>
+        <td class="num-col">${amt.toLocaleString('vi-VN')}</td>
+      </tr>
+    `;
+  });
+
+  return `
+    <div class="header-section">
+      <div class="header-left">
+        HỘ, CÁ NHÂN KINH DOANH: <strong>${info.businessName || '..............................'}</strong><br>
+        Mã số thuế: ${info.taxCode || '..............................'}<br>
+        Địa chỉ: ${info.address || '..............................'}
+      </div>
+      <div class="header-right">
+        <strong>Mẫu số ${decl.id}</strong><br>
+        (Kèm theo Thông tư số 152/2025/TT-BTC<br>
+        ngày 31 tháng 12 năm 2025 của Bộ trưởng Bộ Tài chính)
+      </div>
+    </div>
+    <div class="title-section">
+      <h2>${decl.title}</h2>
+      <p>Địa điểm kinh doanh: ${info.address || '..............................'}</p>
+      <p>${periodStr}</p>
+    </div>
+    <div class="unit-right">Đơn vị tính: đồng Việt Nam</div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:20%">Ngày, tháng<br>A</th>
+          <th style="width:55%">Giao dịch<br>B</th>
+          <th style="width:25%">Số tiền<br>1</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml}
+        <tr>
+          <td colspan="2" style="text-align:center; font-weight:bold;">Tổng cộng</td>
+          <td class="num-col" style="font-weight:bold;">${totalAmt.toLocaleString('vi-VN')}</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="footer-section">
+      <div class="signature">
+        Ngày ${dateNow.getDate()} tháng ${dateNow.getMonth() + 1} năm ${dateNow.getFullYear()}<br>
+        <strong>NGƯỜI ĐẠI DIỆN HỘ KINH DOANH/<br>CÁ NHÂN KINH DOANH</strong><br>
+        (Ký, họ tên, đóng dấu)
+      </div>
+    </div>
+  `;
+}
+
+
+// ─── Nút In: mở hộp thoại in của trình duyệt ─────────────────────────
+function downloadTaxPdf() {
+  const printArea = document.getElementById('taxPrintArea');
+  if (!printArea || !printArea.innerHTML.trim()) {
+    alert('Vui lòng xem trước tờ khai trước khi in!');
+    return;
+  }
+
+  document.body.classList.add('printing-tax');
+  const modal = document.getElementById('taxPreviewModal');
+  if (modal) modal.style.display = 'none';
+
+  window.print();
+
+  document.body.classList.remove('printing-tax');
+  if (modal) modal.style.display = '';
+}
+
+
+// ─── Tải tờ khai ra file Excel ───────────────────────────────────────────
+async function downloadTaxExcel() {
+  const targetId = _activeTaxDeclarationId;
+  if (!targetId || !state.tax) return;
+  const declarations = state.tax.declarations || [];
+  const decl = declarations.find(d => d.id === targetId);
+  if (!decl) return;
+  const info = state.tax.info;
+
+  const btn = document.getElementById('exportExcelBtn');
+  const oldHTML = btn.innerHTML;
+  btn.innerHTML = `<i data-lucide="loader-2" class="lucide-spin"></i> Đang tạo file...`;
+  btn.disabled = true;
+  if (window.lucide) lucide.createIcons();
+
+  try {
+    const txs = getFilteredSalesTransactions(decl.reportPeriod.from, decl.reportPeriod.to, decl.salesChannel);
+
+    const fmtDate = (iso) => {
+      if (!iso) return '';
+      const p = iso.split('-');
+      return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : iso;
+    };
+
+    let periodStr = '';
+    if (decl.reportPeriod.from && decl.reportPeriod.to) {
+      const fp = decl.reportPeriod.from.split('-');
+      const tp = decl.reportPeriod.to.split('-');
+      if (fp.length === 3 && tp.length === 3 && fp[0] === tp[0] && fp[1] === '01' && fp[2] === '01' && tp[1] === '12' && tp[2] === '31') {
+        periodStr = `Năm ${fp[0]}`;
+      } else {
+        periodStr = `${fmtDate(decl.reportPeriod.from)} đến ${fmtDate(decl.reportPeriod.to)}`;
+      }
+    }
+
+    const txsByDate = {};
+    txs.forEach(tx => {
+      let finalPriceSource = tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null ? tx.taxUnitPrice : tx.unitPrice;
+      const price = parseFloat(String(finalPriceSource || '0').replace(/[^0-9.-]+/g, '')) || 0;
+      const qty = Number(tx.qty) || 1;
+      if (!txsByDate[tx.date]) txsByDate[tx.date] = 0;
+      txsByDate[tx.date] += price * qty;
+    });
+
+    const rows = Object.keys(txsByDate).sort().map(date => ({
+      date: fmtDate(date),
+      amount: txsByDate[date]
+    }));
+    const total = rows.reduce((s, r) => s + r.amount, 0);
+
+    const dateNow = new Date();
+    const signDate = `Ngày ${dateNow.getDate()} tháng ${dateNow.getMonth() + 1} năm ${dateNow.getFullYear()}`;
+    
+    // Kiểm tra xem có file mẫu trong localStorage không
+    const b64Template = localStorage.getItem('model_car_tax_template');
+    
+    const workbook = new ExcelJS.Workbook();
+    let worksheet;
+
+    if (b64Template) {
+      // 1. DÙNG TEMPLATE CỦA USER
+      const binaryString = window.atob(b64Template);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      await workbook.xlsx.load(bytes.buffer);
+      
+      // Tìm tab phù hợp (ưu tiên tên sheet có chứa ID hoặc ngược lại ID chứa tên sheet)
+      let targetSheetName = null;
+      const normalizedDeclId = decl.id.replace(/\s|-|\//g,'').toLowerCase(); // s1ahkd
+
+      for (const ws of workbook.worksheets) {
+        const wsName = ws.name.replace(/\s|-|\//g,'').toLowerCase();
+        // Bỏ qua các sheet có tên rỗng hoặc quá ngắn (dưới 2 ký tự) nếu không khớp hoàn toàn
+        if (wsName.length < 2) continue; 
+        
+        if (wsName.includes(normalizedDeclId) || normalizedDeclId.includes(wsName)) {
+          targetSheetName = ws.name;
+          break;
+        }
+      }
+      
+      if (!targetSheetName) targetSheetName = workbook.worksheets[0].name;
+      worksheet = workbook.getWorksheet(targetSheetName);
+
+      // Xóa các sheet không liên quan để file xuất ra chỉ chứa đúng 1 sheet
+      const sheetsToRemove = [];
+      workbook.eachSheet((ws) => {
+        if (ws.name !== targetSheetName) {
+          sheetsToRemove.push(ws.id);
+        }
+      });
+      sheetsToRemove.forEach(id => workbook.removeWorksheet(id));
+
+
+      // Điền thông tin tĩnh
+      const getSafeText = (c) => {
+        if (!c) return '';
+        try {
+          if (c.value && c.value.richText) return c.value.richText.map(t => t.text).join('');
+          if (c.value && c.value.result !== undefined) return String(c.value.result || '');
+          return String(c.text || c.value || '');
+        } catch(e) {
+          return '';
+        }
+      };
+      const normalize = (v) => String(v || '').toLowerCase().trim();
+      let rowHeader = -1;
+      let colNgay = 1;
+      let colDienGiai = 2;
+      let colSoTien = 3;
+
+      worksheet.eachRow((row, rowNumber) => {
+        let hasNgay = false;
+        let hasThang = false;
+        let hasGiao = false;
+
+        row.eachCell((cell, colNumber) => {
+          if (cell.isMerged && cell.master !== cell) return; // Bỏ qua các ô phụ trong cụm merge
+          const v = normalize(getSafeText(cell));
+          
+          let modified = false;
+          let newText = getSafeText(cell);
+          
+          if (v.includes('hộ, cá nhân kinh doanh')) {
+             if (v.includes('mã số thuế') || v.includes('địa chỉ')) {
+                // Cùng nằm trong 1 ô (Alt+Enter)
+                newText = `HỌ, CÁ NHÂN KINH DOANH: ${info.businessName || ''}\nMã số thuế: ${info.taxCode || ''}\nĐịa chỉ: ${info.address || ''}`;
+                modified = true;
+             } else {
+                newText = 'HỌ, CÁ NHÂN KINH DOANH: ' + (info.businessName || '');
+                modified = true;
+             }
+          }
+          if (!modified && v.includes('mã số thuế')) {
+             newText = 'Mã số thuế: ' + (info.taxCode || '');
+             modified = true;
+          }
+          if (!modified && v.includes('địa chỉ') && !v.includes('điểm')) {
+             newText = 'Địa chỉ: ' + (info.address || '');
+             modified = true;
+          }
+          if (!modified && (v.includes('kỳ kê khai') || v.includes('kỳ khai thuế'))) {
+             newText = 'Kỳ khai thuế: ' + periodStr;
+             modified = true;
+          }
+          if (!modified && v.includes('địa điểm kinh doanh')) {
+             newText = 'Địa điểm kinh doanh: ' + (info.address || '');
+             modified = true;
+          }
+          if (!modified && v.includes('đơn vị tính')) {
+             newText = 'Đơn vị tính: VNĐ';
+             modified = true;
+          }
+          if (!modified && v.includes('ngày') && v.includes('tháng') && v.includes('năm') && v.includes('...')) {
+             newText = signDate;
+             modified = true;
+          }
+
+          if (modified) {
+             cell.value = newText;
+             cell.alignment = cell.alignment || {};
+             cell.alignment.wrapText = true;
+          }
+
+          if (v.includes('ngày') || v.includes('ng ')) hasNgay = true;
+          if (v.includes('tháng')) hasThang = true;
+          if (v.includes('giao') || v.includes('diễn giải') || v.includes('dien giai')) hasGiao = true;
+        });
+
+        if (hasGiao && (hasNgay || hasThang) && rowHeader === -1) {
+          rowHeader = rowNumber;
+          row.eachCell((cell, colNumber) => {
+            if (cell.isMerged && cell.master !== cell) return;
+            const v = normalize(getSafeText(cell));
+            if (v.includes('ngày') || v.includes('ng ')) colNgay = colNumber;
+            if (v.includes('giao') || v.includes('diễn giải') || v.includes('dien giai')) colDienGiai = colNumber;
+            if (v.includes('số tiền') || v.includes('so tien')) colSoTien = colNumber;
+          });
+        }
+      });
+
+      if (rowHeader !== -1) {
+        let dataStartRow = rowHeader + 1;
+        const subRow = worksheet.getRow(dataStartRow);
+        let isSub = false;
+        subRow.eachCell(cell => { 
+            const v = normalize(getSafeText(cell));
+            if (v === 'a' || v === '1') isSub = true; 
+        });
+        if (isSub) dataStartRow++;
+
+        let rowTongCong = -1;
+        worksheet.eachRow((row, rowNumber) => {
+          if (rowNumber >= dataStartRow) {
+            row.eachCell(cell => {
+              const v = normalize(getSafeText(cell));
+              if (v.includes('tổng cộng') || v.includes('tong cong')) rowTongCong = rowNumber;
+            });
+          }
+        });
+
+        if (rowTongCong !== -1) {
+          const availableRows = rowTongCong - dataStartRow;
+          const neededRows = rows.length;
+
+          // Nếu thiếu dòng, insert thêm ngay trên Tổng cộng
+          if (neededRows > availableRows) {
+            const extra = neededRows - availableRows;
+            worksheet.spliceRows(rowTongCong, 0, ...Array(extra).fill([]));
+            
+            // Tìm các cột được merge ở dòng dataStartRow để áp dụng cho các dòng mới
+            const mergesToCopy = [];
+            for (let c = 1; c <= 30; c++) {
+               const cell = worksheet.getRow(dataStartRow).getCell(c);
+               if (cell.isMerged && cell.master === cell) {
+                  let right = c;
+                  while (worksheet.getRow(dataStartRow).getCell(right+1).isMerged && worksheet.getRow(dataStartRow).getCell(right+1).master === cell) {
+                     right++;
+                  }
+                  if (right > c) mergesToCopy.push({left: c, right: right});
+                  c = right;
+               }
+            }
+
+            // Copy style và merge
+            for (let i = 0; i < extra; i++) {
+               const srcRow = worksheet.getRow(dataStartRow);
+               const dstRow = worksheet.getRow(rowTongCong + i);
+               dstRow.height = srcRow.height;
+               for (let c = 1; c <= 30; c++) {
+                 dstRow.getCell(c).style = srcRow.getCell(c).style;
+               }
+               mergesToCopy.forEach(m => {
+                 worksheet.mergeCells(rowTongCong + i, m.left, rowTongCong + i, m.right);
+               });
+            }
+            rowTongCong += extra;
+          } else if (availableRows > neededRows) {
+            // Nếu thừa dòng, xóa bớt
+            const extra = availableRows - neededRows;
+            if (neededRows === 0 && availableRows > 0) {
+              // Nếu không có data, chừa lại 1 dòng trống để không phá vỡ template
+              if (extra > 1) {
+                worksheet.spliceRows(dataStartRow + 1, extra - 1);
+                rowTongCong -= (extra - 1);
+              }
+            } else if (extra > 0) {
+              worksheet.spliceRows(dataStartRow + neededRows, extra);
+              rowTongCong -= extra;
+            }
+          }
+
+          // Điền data vào các dòng có sẵn
+          for (let i = 0; i < neededRows; i++) {
+             const rData = worksheet.getRow(dataStartRow + i);
+             rData.getCell(colNgay).value = rows[i].date;
+             rData.getCell(colDienGiai).value = "Doanh thu bán hàng";
+             rData.getCell(colSoTien).value = rows[i].amount;
+             rData.getCell(colSoTien).numFmt = '#,##0'; // Đảm bảo format số
+          }
+
+          // Ghi tổng
+          worksheet.getRow(rowTongCong).getCell(colSoTien).value = total;
+          worksheet.getRow(rowTongCong).getCell(colSoTien).numFmt = '#,##0';
+        }
+      }
+    } else {
+      // 2. TẠO TỪ SCRATCH NẾU KHÔNG CÓ TEMPLATE
+      worksheet = workbook.addWorksheet(`Mẫu số ${decl.id}`);
+      
+      worksheet.getColumn(1).width = 25;
+      worksheet.getColumn(2).width = 45;
+      worksheet.getColumn(3).width = 25;
+
+      const setStyle = (cell, options) => {
+        cell.font = { name: 'Times New Roman', size: options.size || 12, bold: options.bold || false, italic: options.italic || false };
+        cell.alignment = { vertical: 'middle', horizontal: options.align || 'left', wrapText: true };
+      };
+      const setBrd = (cell) => {
+        cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
+      };
+
+      let r1 = worksheet.getRow(1);
+      r1.getCell(1).value = `HỌ, CÁ NHÂN KINH DOANH: ${info.businessName || ''}`;
+      r1.getCell(3).value = `Mẫu số S1a-HKD`;
+      setStyle(r1.getCell(1), {bold: true, size: 12});
+      setStyle(r1.getCell(3), {bold: true, size: 12, align: 'center'});
+
+      let r2 = worksheet.getRow(2);
+      r2.getCell(1).value = `Mã số thuế: ${info.taxCode || ''}`;
+      r2.getCell(3).value = `(Kèm theo Thông tư số 152/2025/TT-BTC ngày 31 tháng 12 năm 2025 của Bộ trưởng Bộ Tài chính)`;
+      setStyle(r2.getCell(1), {bold: true, size: 12});
+      setStyle(r2.getCell(3), {size: 11, italic: true, align: 'center'});
+      r2.height = 35;
+
+      let r3 = worksheet.getRow(3);
+      r3.getCell(1).value = `Địa chỉ: ${info.address || ''}`;
+      setStyle(r3.getCell(1), {bold: true, size: 12});
+
+      let r6 = worksheet.getRow(6);
+      worksheet.mergeCells('A6:C6');
+      r6.getCell(1).value = `SỔ CHI TIẾT DOANH THU BÁN HÀNG HÓA, DỊCH VỤ`;
+      setStyle(r6.getCell(1), {bold: true, size: 14, align: 'center'});
+
+      let r7 = worksheet.getRow(7);
+      worksheet.mergeCells('A7:C7');
+      r7.getCell(1).value = `Địa điểm kinh doanh: ${info.address || ''}`;
+      setStyle(r7.getCell(1), {size: 12, align: 'center'});
+      
+      let r8 = worksheet.getRow(8);
+      worksheet.mergeCells('A8:C8');
+      r8.getCell(1).value = `Kỳ kê khai: ${periodStr}`;
+      setStyle(r8.getCell(1), {size: 12, align: 'center'});
+
+      let r9 = worksheet.getRow(9);
+      worksheet.mergeCells('A9:C9');
+      r9.getCell(1).value = `Đơn vị tính: VNĐ`;
+      setStyle(r9.getCell(1), {size: 12, italic: true, align: 'right'});
+
+      let r10 = worksheet.getRow(10);
+      r10.getCell(1).value = 'Ngày\ntháng';
+      r10.getCell(2).value = 'Giao dịch';
+      r10.getCell(3).value = 'Số tiền';
+      [1,2,3].forEach(c => { setStyle(r10.getCell(c), {bold: true, align: 'center'}); setBrd(r10.getCell(c)); });
+      r10.height = 30;
+
+      let r11 = worksheet.getRow(11);
+      r11.getCell(1).value = 'A';
+      r11.getCell(2).value = 'B';
+      r11.getCell(3).value = '1';
+      [1,2,3].forEach(c => { setStyle(r11.getCell(c), {bold: true, align: 'center'}); setBrd(r11.getCell(c)); });
+
+      let currentRow = 12;
+      rows.forEach(r => {
+         let rData = worksheet.getRow(currentRow);
+         rData.getCell(1).value = r.date;
+         rData.getCell(2).value = 'Doanh thu bán hàng';
+         rData.getCell(3).value = r.amount;
+         setStyle(rData.getCell(1), {align: 'center'});
+         setStyle(rData.getCell(2), {align: 'left'});
+         setStyle(rData.getCell(3), {align: 'right'});
+         rData.getCell(3).numFmt = '#,##0';
+         [1,2,3].forEach(c => setBrd(rData.getCell(c)));
+         currentRow++;
+      });
+
+      let rTotal = worksheet.getRow(currentRow);
+      worksheet.mergeCells(`A${currentRow}:B${currentRow}`);
+      rTotal.getCell(1).value = 'Tổng cộng';
+      rTotal.getCell(3).value = total;
+      setStyle(rTotal.getCell(1), {bold: true, align: 'center'});
+      setStyle(rTotal.getCell(3), {bold: true, align: 'right'});
+      rTotal.getCell(3).numFmt = '#,##0';
+      setBrd(rTotal.getCell(1));
+      setBrd(rTotal.getCell(3)); // cell 2 is merged
+
+      let rSign = worksheet.getRow(currentRow + 2);
+      worksheet.mergeCells(`B${currentRow+2}:C${currentRow+2}`);
+      rSign.getCell(2).value = signDate;
+      setStyle(rSign.getCell(2), {italic: true, align: 'center'});
+
+      let rSign2 = worksheet.getRow(currentRow + 3);
+      worksheet.mergeCells(`B${currentRow+3}:C${currentRow+3}`);
+      rSign2.getCell(2).value = `NGƯỜI ĐẠI DIỆN HỘ KINH DOANH/\nCÁ NHÂN KINH DOANH\n(Ký, họ tên, đóng dấu)`;
+      setStyle(rSign2.getCell(2), {bold: true, align: 'center'});
+      rSign2.height = 60;
+    }
+
+    const excelBuffer = await workbook.xlsx.writeBuffer();
+
+    // Tạo PDF từ vùng preview HTML
+    const printArea = document.getElementById('taxPrintArea');
+    let pdfBlob = null;
+    if (printArea && printArea.innerHTML.trim() && typeof html2pdf !== 'undefined') {
+      pdfBlob = await html2pdf().set({
+        margin: [10, 10, 10, 10],
+        filename: `To_Khai_${decl.id}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      }).from(printArea).outputPdf('blob');
+    }
+
+    // Đóng gói vào ZIP
+    const zip = new JSZip();
+    const fileName = `To_Khai_${decl.id}_${new Date().toISOString().slice(0,10)}`;
+    zip.file(`${fileName}.xlsx`, excelBuffer);
+    if (pdfBlob) zip.file(`${fileName}.pdf`, pdfBlob);
+
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(zipBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${fileName}.zip`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+  } catch (err) {
+    console.error(err);
+    alert('❌ Lỗi khi xuất Excel: ' + err.message);
+  } finally {
+    btn.innerHTML = oldHTML;
+    btn.disabled = false;
+    if (window.lucide) lucide.createIcons();
+  }
+}
+
+async function downloadTaxZip() {
+  const targetId = _activeTaxDeclarationId;
+  if (!targetId || !state.tax) return;
+  const declarations = state.tax.declarations || [];
+  const decl = declarations.find(d => d.id === targetId);
+  if (!decl) return;
+  const info = state.tax.info;
+
+  const btn = document.getElementById('exportZipBtn');
+  const oldHTML = btn.innerHTML;
+  btn.innerHTML = `<i data-lucide="loader-2" class="lucide-spin"></i> Đang nén...`;
+  btn.disabled = true;
+
+  try {
+    const printArea = document.getElementById('taxPrintArea');
+    if (!printArea) throw new Error("Không tìm thấy dữ liệu.");
+
+    // 1. Tạo file Excel (SheetJS)
+    const txs = getFilteredSalesTransactions(decl.reportPeriod.from, decl.reportPeriod.to, decl.salesChannel);
+    const formatDate = (iso) => {
+      if (!iso) return '...';
+      const p = iso.split('-');
+      if (p.length === 3) return `${p[2]}/${p[1]}/${p[0]}`;
+      return iso;
+    };
+    
+    let periodStr = `Kỳ kê khai: .......................................`;
+    if (decl.reportPeriod.from && decl.reportPeriod.to) {
+      const fromParts = decl.reportPeriod.from.split('-');
+      const toParts = decl.reportPeriod.to.split('-');
+      if (fromParts.length === 3 && toParts.length === 3 && fromParts[0] === toParts[0] && fromParts[1] === '01' && fromParts[2] === '01' && toParts[1] === '12' && toParts[2] === '31') {
+        periodStr = `Kỳ kê khai: Năm ${fromParts[0]}`;
+      } else {
+        periodStr = `Kỳ kê khai: ${formatDate(decl.reportPeriod.from)} đến ${formatDate(decl.reportPeriod.to)}`;
+      }
+    }
+
+    const txsByDate = {};
+    txs.forEach(tx => {
+      let priceStr = String(tx.unitPrice || '0').replace(/[^0-9.-]+/g, "");
+      let price = parseFloat(priceStr) || 0;
+      let qty = Number(tx.qty) || 1;
+      if (!txsByDate[tx.date]) txsByDate[tx.date] = 0;
+      txsByDate[tx.date] += price * qty;
+    });
+
+    function base64ToArrayBuffer(base64) {
+      var binary_string = window.atob(base64);
+      var len = binary_string.length;
+      var bytes = new Uint8Array(len);
+      for (var i = 0; i < len; i++) {
+          bytes[i] = binary_string.charCodeAt(i);
+      }
+      return bytes.buffer;
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    let templateData = localStorage.getItem('model_car_tax_template');
+    if (!templateData && state.tax.config && state.tax.config.declarationTemplateData) {
+      templateData = state.tax.config.declarationTemplateData;
+    }
+
+    if (templateData) {
+      const buffer = base64ToArrayBuffer(templateData);
+      await workbook.xlsx.load(buffer);
+      const ws = workbook.worksheets[0];
+
+      const setVal = (cell, val) => {
+        const c = ws.getCell(cell);
+        if (c) c.value = val;
+      };
+
+      setVal('A1', `HỘ, CÁ NHÂN KINH DOANH: ${info.businessName || '..............................'}`);
+      setVal('A2', `Mã số thuế: ${info.taxCode || '..............................'}`);
+      setVal('A3', `Địa chỉ: ${info.address || '..............................'}`);
+      setVal('C1', `Mẫu số ${decl.id}`);
+      setVal('A5', decl.title);
+      setVal('A6', `Địa điểm kinh doanh: ${info.address || '..............................'}`);
+      setVal('A7', periodStr);
+
+      let startRow = 8;
+      ws.eachRow((row, rowNumber) => {
+        row.eachCell((cell, colNumber) => {
+          if (cell.value && String(cell.value).toLowerCase().includes("ngày, tháng")) {
+            startRow = rowNumber + 1;
+          }
+        });
+      });
+      
+      let totalAmt = 0;
+      let currRow = startRow;
+      const groupedDates = Object.keys(txsByDate).sort();
+      const styleRow = ws.getRow(startRow); // Copy style từ hàng trống đầu tiên
+      
+      groupedDates.forEach(date => {
+        const amt = txsByDate[date];
+        totalAmt += amt;
+        
+        let row = ws.getRow(currRow);
+        row.getCell(1).value = formatDate(date);
+        row.getCell(2).value = "Doanh thu bán hàng";
+        row.getCell(3).value = amt;
+        
+        // Copy styles
+        for(let i=1; i<=3; i++) {
+           row.getCell(i).style = styleRow.getCell(i).style;
+        }
+        currRow++;
+      });
+
+      // Tổng cộng
+      let totalRow = ws.getRow(currRow);
+      totalRow.getCell(1).value = "Tổng cộng";
+      totalRow.getCell(3).value = totalAmt;
+      for(let i=1; i<=3; i++) {
+           totalRow.getCell(i).style = styleRow.getCell(i).style;
+      }
+      totalRow.getCell(1).font = { bold: true };
+      totalRow.getCell(3).font = { bold: true };
+
+      currRow += 2;
+      const dateNow = new Date();
+      ws.getCell(`C${currRow}`).value = `Ngày ${dateNow.getDate()} tháng ${dateNow.getMonth() + 1} năm ${dateNow.getFullYear()}`;
+      ws.getCell(`C${currRow}`).alignment = { horizontal: 'center' };
+      ws.getCell(`C${currRow+1}`).value = "NGƯỜI ĐẠI DIỆN HỘ KINH DOANH/\nCÁ NHÂN KINH DOANH";
+      ws.getCell(`C${currRow+1}`).alignment = { horizontal: 'center', wrapText: true };
+      ws.getCell(`C${currRow+1}`).font = { bold: true };
+      ws.getCell(`C${currRow+2}`).value = "(Ký, họ tên, đóng dấu)";
+      ws.getCell(`C${currRow+2}`).alignment = { horizontal: 'center' };
+    } else {
+      const ws = workbook.addWorksheet("ToKhai");
+      ws.columns = [
+         { header: '', key: 'col1', width: 15 },
+         { header: '', key: 'col2', width: 45 },
+         { header: '', key: 'col3', width: 18 }
+      ];
+      ws.getCell('A1').value = `HỘ, CÁ NHÂN KINH DOANH: ${info.businessName || '..............................'}`;
+      ws.getCell('C1').value = `Mẫu số ${decl.id}`;
+      ws.getCell('A2').value = `Mã số thuế: ${info.taxCode || '..............................'}`;
+      ws.getCell('C2').value = `(Kèm theo Thông tư số 152/2025/TT-BTC`;
+      ws.getCell('A3').value = `Địa chỉ: ${info.address || '..............................'}`;
+      ws.getCell('C3').value = `ngày 31 tháng 12 năm 2025 của Bộ trưởng Bộ Tài chính)`;
+      
+      ws.getCell('A5').value = decl.title;
+      ws.getCell('A5').font = { bold: true, size: 12 };
+      ws.getCell('A5').alignment = { horizontal: 'center' };
+      ws.mergeCells('A5:C5');
+      
+      ws.getCell('A6').value = `Địa điểm kinh doanh: ${info.address || '..............................'}`;
+      ws.mergeCells('A6:C6');
+      ws.getCell('A7').value = periodStr;
+      ws.mergeCells('A7:C7');
+      
+      ws.getCell('C8').value = "Đơn vị tính: đồng Việt Nam";
+      ws.getCell('C8').alignment = { horizontal: 'right' };
+      
+      const headerRow = ws.getRow(9);
+      headerRow.values = ["Ngày, tháng\nA", "Giao dịch\nB", "Số tiền\n1"];
+      headerRow.font = { bold: true };
+      headerRow.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      
+      let currRow = 10;
+      let totalAmt = 0;
+      const groupedDates = Object.keys(txsByDate).sort();
+      groupedDates.forEach(date => {
+        const amt = txsByDate[date];
+        totalAmt += amt;
+        let row = ws.getRow(currRow);
+        row.values = [formatDate(date), "Doanh thu bán hàng", amt];
+        currRow++;
+      });
+      
+      let totalRow = ws.getRow(currRow);
+      totalRow.values = ["Tổng cộng", "", totalAmt];
+      totalRow.font = { bold: true };
+      
+      // Khung viền
+      for(let r = 9; r <= currRow; r++) {
+         let rObj = ws.getRow(r);
+         for(let c = 1; c <= 3; c++) {
+            rObj.getCell(c).border = {
+               top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'}
+            };
+         }
+      }
+      
+      currRow += 2;
+      const dateNow = new Date();
+      ws.getCell(`C${currRow}`).value = `Ngày ${dateNow.getDate()} tháng ${dateNow.getMonth() + 1} năm ${dateNow.getFullYear()}`;
+      ws.getCell(`C${currRow}`).alignment = { horizontal: 'center' };
+      ws.getCell(`C${currRow+1}`).value = "NGƯỜI ĐẠI DIỆN HỘ KINH DOANH/\nCÁ NHÂN KINH DOANH";
+      ws.getCell(`C${currRow+1}`).alignment = { horizontal: 'center', wrapText: true };
+      ws.getCell(`C${currRow+1}`).font = { bold: true };
+      ws.getCell(`C${currRow+2}`).value = "(Ký, họ tên, đóng dấu)";
+      ws.getCell(`C${currRow+2}`).alignment = { horizontal: 'center' };
+    }
+
+    const excelBuffer = await workbook.xlsx.writeBuffer();
+    const excelBlob = new Blob([excelBuffer], {type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+
+    // 2. Tạo file PDF (html2pdf)
+    const opt = {
+      margin:       10,
+      filename:     `ToKhai.pdf`,
+      image:        { type: 'jpeg', quality: 0.98 },
+      html2canvas:  { scale: 2 },
+      jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+    const pdfBlob = await html2pdf().set(opt).from(printArea).output('blob');
+
+    // 3. Nén ZIP (JSZip)
+    const zip = new JSZip();
+    const baseName = `ToKhai_${targetId}_${Date.now()}`;
+    zip.file(`${baseName}.xlsx`, excelBlob);
+    zip.file(`${baseName}.pdf`, pdfBlob);
+
+    const zipBlob = await zip.generateAsync({type:"blob"});
+    const url = URL.createObjectURL(zipBlob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${baseName}.zip`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+  } catch (err) {
+    console.error(err);
+    alert("Đã xảy ra lỗi khi tạo file ZIP: " + err.message);
+  } finally {
+    if(btn) {
+        btn.innerHTML = oldHTML;
+        btn.disabled = false;
+        if(window.lucide) lucide.createIcons();
+    }
+  }
+}
+
+// --- Render: Cấu Hình ---
+function renderTaxConfig() {
+  const cfg = (state.tax && state.tax.config) || {};
+  const infoEl = document.getElementById('taxTemplateCurrentInfo');
+  const fileNameEl = document.getElementById('taxTemplateFileName');
+  if (cfg.declarationTemplateName) {
+    if (infoEl) infoEl.innerHTML = `
+      <b>Đang dùng file mẫu:</b> ${cfg.declarationTemplateName}<br>
+      <span style="font-size:12px;color:var(--text-muted);">Cập nhật lúc: ${cfg.declarationTemplateLastUpdated || 'Chưa rõ'}</span>
+    `;
+    if (fileNameEl) fileNameEl.innerText = cfg.declarationTemplateName;
+  } else {
+    if (infoEl) infoEl.innerHTML = `<span style="color:var(--text-muted);">Chưa có file mẫu nào được chọn. File mặc định: <b>SO_SACH_KE-TOAN_THEO_TT_152-1.xlsx</b></span>`;
+    if (fileNameEl) fileNameEl.innerText = 'Chưa chọn file';
+  }
+  lucide.createIcons();
+}
+
+// --- Upload file mẫu ---
+function handleTaxTemplateUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  if (!state.tax) state.tax = getDefaultTaxState();
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const data = e.target.result;
+    const base64 = data.split(',')[1];
+    
+    // Lưu base64 vào key riêng biệt để chống lag
+    localStorage.setItem('model_car_tax_template', base64);
+    
+    state.tax.config.declarationTemplateName = file.name;
+    state.tax.config.declarationTemplateLastUpdated = new Date().toLocaleString('vi-VN');
+    delete state.tax.config.declarationTemplateData; // đảm bảo không có
+    saveStateToLocalStorage();
+
+    const fileNameEl = document.getElementById('taxTemplateFileName');
+    if (fileNameEl) fileNameEl.innerText = file.name;
+    renderTaxConfig();
+    alert(`Đã lưu file mẫu: ${file.name}`);
+  };
+  reader.readAsDataURL(file);
+
+  // Reset input để có thể chọn lại cùng file nếu muốn
+  event.target.value = '';
+}
+
+// --- Xóa file mẫu ---
+function removeTaxTemplate() {
+  if (!state.tax) return;
+  if (!confirm('Xóa file mẫu kê khai?')) return;
+  
+  localStorage.removeItem('model_car_tax_template');
+  
+  state.tax.config.declarationTemplateName = '';
+  state.tax.config.declarationTemplateLastUpdated = '';
+  delete state.tax.config.declarationTemplateData;
+  saveStateToLocalStorage();
+  renderTaxConfig();
+}
 
 window.addEventListener("DOMContentLoaded", async () => {
   // Khởi tạo các bộ chọn ngày tùy chỉnh (lịch tiếng Việt, định dạng dd/mm/yyyy)

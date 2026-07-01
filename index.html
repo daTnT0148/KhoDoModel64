@@ -14,6 +14,48 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <!-- Custom Styling -->
   <link rel="stylesheet" href="style.css">
+  <style>
+    @media print {
+      /* Ẩn toàn bộ giao diện ứng dụng */
+      body > *,
+      .app-container,
+      .sidebar,
+      .main-content,
+      .modal-backdrop {
+        display: none !important;
+      }
+
+      /* Chỉ hiển thị vùng in tờ khai */
+      body.printing-tax #taxPrintArea {
+        display: block !important;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        margin: 0;
+        padding: 0;
+        background: white !important;
+        color: black !important;
+      }
+
+      @page {
+        size: A4 portrait;
+        margin: 15mm 10mm;
+      }
+
+      body {
+        background: white !important;
+        margin: 0;
+        padding: 0;
+      }
+
+      /* Giữ nguyên style của tờ khai */
+      .tax-print-area * {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+    }
+  </style>
 </head>
 <body>
 
@@ -74,6 +116,34 @@
               <i data-lucide="calendar"></i>
               <span>Báo cáo năm</span>
             </a>
+          </li>
+          <!-- Thuế Module -->
+          <li class="nav-item-parent" id="taxNavParent">
+            <a href="#" class="nav-link nav-link-parent" id="taxNavToggle">
+              <i data-lucide="receipt"></i>
+              <span>Thuế</span>
+              <i data-lucide="chevron-right" class="nav-chevron" id="taxNavChevron"></i>
+            </a>
+            <ul class="nav-submenu hidden" id="taxSubmenu">
+              <li>
+                <a href="#" class="nav-link nav-sublink" data-tab="tax-info">
+                  <i data-lucide="user-circle"></i>
+                  <span>Thông Tin</span>
+                </a>
+              </li>
+              <li>
+                <a href="#" class="nav-link nav-sublink" data-tab="tax-declarations">
+                  <i data-lucide="file-text"></i>
+                  <span>Tờ Khai</span>
+                </a>
+              </li>
+              <li>
+                <a href="#" class="nav-link nav-sublink" data-tab="tax-config">
+                  <i data-lucide="settings-2"></i>
+                  <span>Cấu hình</span>
+                </a>
+              </li>
+            </ul>
           </li>
           <li>
             <a href="#" class="nav-link" data-tab="settings">
@@ -173,14 +243,14 @@
 
           <!-- Charts Row -->
           <div class="chart-row">
-            <!-- Year-over-Year (YoY) Chart -->
-            <div class="chart-card chart-large">
-              <div class="chart-card-header">
-                <h3>Doanh thu & Chi phí theo các năm</h3>
-                <span class="chart-tag">Biểu đồ cột so sánh</span>
+            <!-- Doanh thu năm hiện tại -->
+            <div class="chart-card chart-large" style="display:flex; flex-direction:column; justify-content:center; align-items:center; padding-bottom:30px;">
+              <div class="chart-card-header" style="width:100%; text-align:center; display:flex; flex-direction:column; gap:6px;">
+                <h3 style="font-size:18px;"><i data-lucide="calendar"></i> Doanh thu tổng năm nay</h3>
+                <span class="chart-tag" style="margin:auto;">(Bao gồm giá đăng bán Shopee & lợi nhuận kênh khác)</span>
               </div>
-              <div class="chart-wrapper">
-                <canvas id="yoyChart"></canvas>
+              <div style="flex:1; display:flex; align-items:center; justify-content:center; width:100%; margin-top:20px;">
+                <h1 id="val-yearly-revenue" style="font-size: 2.8rem; color: var(--success); margin: 0; font-weight:800; text-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);">0 vnd</h1>
               </div>
             </div>
             
@@ -561,8 +631,15 @@
                     <label for="sellQty">Số lượng bán <span class="required">*</span></label>
                     <input type="number" id="sellQty" min="1" value="1" required>
                   </div>
+                  <div class="form-group" id="sellTaxUnitPriceGroup" style="display:none;">
+                    <label for="sellTaxUnitPrice">Giá đăng bán Shopee / chiếc <span class="required">*</span></label>
+                    <div class="currency-input-wrapper">
+                      <input type="text" id="sellTaxUnitPrice" placeholder="Doanh thu khai thuế...">
+                      <span class="currency-addon">vnd</span>
+                    </div>
+                  </div>
                   <div class="form-group">
-                    <label for="sellUnitPrice">Giá bán / chiếc <span class="required">*</span></label>
+                    <label for="sellUnitPrice" id="sellUnitPriceLabel">Giá bán (hoặc Lợi nhuận) / chiếc <span class="required">*</span></label>
                     <div class="currency-input-wrapper">
                       <input type="text" id="sellUnitPrice" placeholder="Số tiền..." required>
                       <span class="currency-addon" id="sellCurrencyAddon">vnd</span>
@@ -596,6 +673,16 @@
                   <option value="all">Tất cả giao dịch</option>
                   <option value="buy">Chỉ giao dịch Mua</option>
                   <option value="sell">Chỉ giao dịch Bán</option>
+                </select>
+                <select id="historyFilterChannel">
+                  <option value="all">Tất cả kênh</option>
+                  <option value="Shopee">Shopee</option>
+                  <option value="Facebook">Facebook</option>
+                  <option value="Trực tiếp">Trực tiếp</option>
+                </select>
+                <select id="historySort">
+                  <option value="desc">Ngày bán: Gần nhất</option>
+                  <option value="asc">Ngày bán: Cũ nhất</option>
                 </select>
               </div>
             </div>
@@ -764,6 +851,139 @@
 
         </section>
 
+        <!-- ================= PANEL: TAX INFO ================= -->
+        <section class="panel" id="panel-tax-info">
+          <div class="settings-grid">
+            <div class="settings-card settings-card-full">
+              <h3><i data-lucide="user-circle"></i> Thông tin Hộ kinh doanh / Cá nhân</h3>
+              <p class="settings-desc">Nhập thông tin dùng cho kê khai thuế theo Thông tư 152/2025/TT-BTC.</p>
+              <form class="styled-form" id="taxInfoForm">
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="taxCodeInput">Mã số thuế <span class="required">*</span></label>
+                    <input type="text" id="taxCodeInput" placeholder="Nhập mã số thuế..." autocomplete="off">
+                  </div>
+                  <div class="form-group">
+                    <label for="taxBusinessNameInput">Tên / Hộ kinh doanh <span class="required">*</span></label>
+                    <input type="text" id="taxBusinessNameInput" placeholder="Nhập tên hộ kinh doanh...">
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label for="taxAddressInput">Địa chỉ kinh doanh</label>
+                  <input type="text" id="taxAddressInput" placeholder="Nhập địa chỉ đầy đủ...">
+                </div>
+                <div class="form-group" style="margin-top: 8px;">
+                  <button type="button" class="btn btn-primary" onclick="saveTaxInfo()">
+                    <i data-lucide="save"></i> Lưu thông tin
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================= PANEL: TAX DECLARATIONS ================= -->
+        <section class="panel" id="panel-tax-declarations">
+          <div id="taxDeclarationsListView">
+            <div class="card-header-actions" style="margin-bottom: 20px;">
+              <h3 style="color:var(--text-white);font-size:18px;font-weight:700;">Danh sách Sổ kế toán HKD</h3>
+              <div id="taxTemplateStatusBadge" style="font-size:12px;color:var(--text-muted);"></div>
+            </div>
+            <div class="tax-declaration-grid" id="taxDeclarationGrid">
+              <!-- Render dynamically via JS -->
+            </div>
+          </div>
+          <!-- Detail View (hidden by default) -->
+          <div id="taxDeclarationDetailView" class="hidden">
+            <div class="card-header-actions" style="margin-bottom: 20px;">
+              <button class="btn btn-secondary btn-sm" onclick="closeTaxDeclarationDetail()">
+                <i data-lucide="arrow-left"></i> Quay lại
+              </button>
+              <div id="taxDetailBadge"></div>
+            </div>
+            <div class="settings-card">
+              <h3 id="taxDetailTitle"></h3>
+              <p class="settings-desc" id="taxDetailSubtitle"></p>
+              <div class="styled-form">
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>Từ ngày (Kỳ báo cáo)</label>
+                    <div class="datepicker-wrapper" id="taxDetailFromWrapper">
+                      <input type="text" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
+                      <i data-lucide="calendar" class="datepicker-icon"></i>
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label>Đến ngày (Kỳ báo cáo)</label>
+                    <div class="datepicker-wrapper" id="taxDetailToWrapper">
+                      <input type="text" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
+                      <i data-lucide="calendar" class="datepicker-icon"></i>
+                    </div>
+                  </div>
+                </div>
+                <p id="taxDetailPeriodError" style="color:var(--danger);font-size:12px;display:none;">⚠ Kỳ báo cáo không được vượt quá 1 năm.</p>
+                <div class="form-group">
+                  <label for="taxDetailChannel">Kênh bán hàng</label>
+                  <select id="taxDetailChannel" class="styled-form">
+                    <option value="all">Tất cả kênh bán hàng</option>
+                    <option value="Facebook">Facebook</option>
+                    <option value="Shopee">Shopee</option>
+                    <option value="Trực tiếp">Trực tiếp</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="taxDetailNote">Ghi chú</label>
+                  <textarea id="taxDetailNote" rows="3" placeholder="Ghi chú cho tờ khai này..."></textarea>
+                </div>
+                <div class="form-group" style="margin-top:8px;display:flex;gap:12px;">
+                  <button type="button" class="btn btn-primary" onclick="previewTaxDeclaration()">
+                    <i data-lucide="file-check-2"></i> Xuất dữ liệu
+                  </button>
+                  <button type="button" class="btn btn-secondary" onclick="closeTaxDeclarationDetail()">
+                    Hủy
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================= PANEL: TAX CONFIG ================= -->
+        <section class="panel" id="panel-tax-config">
+          <div class="settings-grid">
+            <div class="settings-card settings-card-full">
+              <h3><i data-lucide="file-spreadsheet"></i> File mẫu kê khai</h3>
+              <p class="settings-desc">Tải lên file mẫu Excel dùng cho kê khai thuế (theo Thông tư 152/2025/TT-BTC). File mặc định: <code>SO_SACH_KE-TOAN_THEO_TT_152-1.xlsx</code></p>
+              <div class="settings-actions">
+                <div id="taxTemplateCurrentInfo" class="info-bubble" style="margin-bottom:16px;"></div>
+                <div class="import-csv-wrapper">
+                  <label class="btn btn-secondary" for="taxTemplateFileInput">
+                    <i data-lucide="upload"></i> Chọn file mẫu (.xlsx)
+                  </label>
+                  <input type="file" id="taxTemplateFileInput" accept=".xlsx,.xls" class="hidden" onchange="handleTaxTemplateUpload(event)">
+                  <span class="file-name" id="taxTemplateFileName">Chưa chọn file</span>
+                </div>
+                <button class="btn btn-danger" id="removeTaxTemplateBtn" onclick="removeTaxTemplate()" style="margin-top:12px;">
+                  <i data-lucide="trash-2"></i> Xóa file mẫu đã chọn
+                </button>
+              </div>
+            </div>
+            <div class="settings-card settings-card-full">
+              <h3><i data-lucide="info"></i> Hướng dẫn</h3>
+              <div class="tutorial-content">
+                <div class="tutorial-step">
+                  <strong>1. File mẫu kê khai là gì?</strong>
+                  <p>Đây là file Excel theo mẫu của Bộ Tài chính (TT 152/2025/TT-BTC) dùng để kê khai doanh thu hộ kinh doanh. Bạn tải lên để hệ thống có thể map dữ liệu vào đúng ô sau này.</p>
+                </div>
+                <div class="tutorial-step">
+                  <strong>2. Cách sử dụng:</strong>
+                  <p>Chọn file .xlsx phù hợp từ máy tính. Tên file và thời điểm cập nhật sẽ được lưu lại. Trong tương lai, hệ thống sẽ hỗ trợ xuất dữ liệu trực tiếp vào file mẫu này.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
       </div>
     </main>
 
@@ -828,6 +1048,13 @@
             <label for="editTxQty">Số lượng <span class="required">*</span></label>
             <input type="number" id="editTxQty" min="1" required>
           </div>
+          <div class="form-group" id="editTxTaxUnitPriceGroup" style="display:none;">
+            <label for="editTxTaxUnitPrice">Giá đăng bán Shopee / chiếc <span class="required">*</span></label>
+            <div class="currency-input-wrapper">
+              <input type="text" id="editTxTaxUnitPrice" placeholder="Doanh thu khai thuế...">
+              <span class="currency-addon">vnd</span>
+            </div>
+          </div>
           <div class="form-group">
             <label for="editTxPrice" id="editTxPriceLabel">Đơn giá <span class="required">*</span></label>
             <div class="currency-input-wrapper">
@@ -849,6 +1076,38 @@
       </form>
     </div>
   </div>
+
+  <!-- Modal Xem Trước Tờ Khai Thuế -->
+  <div class="modal-backdrop hidden" id="taxPreviewModal">
+    <div class="modal-card modal-card-large">
+      <div class="modal-header">
+        <h3><i data-lucide="printer"></i> Xem trước Tờ khai</h3>
+        <button class="modal-close-btn" onclick="closeTaxPreview()">&times;</button>
+      </div>
+      <div class="tax-preview-actions" style="padding:16px; border-bottom:1px solid var(--card-border); display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.2);">
+        <p style="font-size:13px;color:var(--text-muted);margin:0;">Xem trước tờ khai. Nhấn <b>Tải về</b> để lưu tờ khai dưới dạng file ZIP gồm Excel và PDF.</p>
+        <div style="display:flex; gap:12px;">
+          <button class="btn btn-secondary" onclick="downloadTaxPdf()" id="exportPdfBtn">
+            <i data-lucide="printer"></i> In
+          </button>
+          <button class="btn btn-primary" onclick="downloadTaxExcel()" id="exportExcelBtn">
+            <i data-lucide="download"></i> Tải về
+          </button>
+        </div>
+      </div>
+      <div class="tax-preview-container" style="max-height:60vh; overflow-y:auto; padding:20px; background:#e5e7eb;">
+        <!-- Đây là khu vực sẽ in -->
+        <div id="taxPrintArea" class="tax-print-area">
+          <!-- Bơm nội dung HTML tờ khai vào đây -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- External Libraries for Export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
   <!-- Main JavaScript File -->
   <script src="mock_db.js"></script>
