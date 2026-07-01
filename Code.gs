@@ -4,8 +4,8 @@
  */
 
 const SHEET_ID        = "1VB01bVUDH-fBKwiS4JfOhiNSqsH37snzYZnHefq86Xs";
-const DRIVE_FOLDER_ID = "1eaGPgd7czUjSTBBXPsFJ1LT4ac4TlFHg?usp=drive_link";
-const SECRET_KEY      = "Kntvntd482001";
+const DRIVE_FOLDER_ID = "1eaGPgd7czUjSTBBXPsFJ1LT4ac4TlFHg";
+const SECRET_KEY      = "Kntvntd482001"; // ← PHẢI GIỐNG VỚI KEY TRONG env.js
 
 function getSpreadsheet() {
   return SHEET_ID
