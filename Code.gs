@@ -72,7 +72,28 @@ function getSheet(name) {
   const ss = getSpreadsheet();
   let sheet = ss.getSheetByName(name);
   if (!sheet) sheet = createSheet(ss, name);
+  // Trả hàng: tự động bổ sung 2 cột relatedTxId/returnLoss cho sheet Transactions cũ
+  // (đã tạo từ trước khi có tính năng Trả hàng) mà không cần người dùng tự sửa tay.
+  if (name === "Transactions") ensureTransactionsColumns(sheet);
   return sheet;
+}
+
+function ensureTransactionsColumns(sheet) {
+  const lastCol = sheet.getLastColumn();
+  const headers = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
+  const required = ["relatedTxId", "returnLoss", "taxUnitPrice"]; // Trả hàng: liên kết + khoản lỗ | Shopee: giá đăng bán/khai thuế
+  let changed = false;
+  required.forEach(col => {
+    if (headers.indexOf(col) === -1) {
+      headers.push(col);
+      changed = true;
+    }
+  });
+  if (changed) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.getRange(1, 1, 1, headers.length)
+      .setBackground("#1e293b").setFontColor("#ffffff").setFontWeight("bold");
+  }
 }
 
 function createSheet(ss, name) {
@@ -80,7 +101,8 @@ function createSheet(ss, name) {
   const headers = {
     Portfolios:   ["portfolioId", "portfolioName"],
     Transactions: ["id", "portfolioId", "type", "modelName", "brand", "qty",
-                   "unitCost", "unitPrice", "channel", "notes", "date", "color", "packaging", "sku"],
+                   "unitCost", "unitPrice", "channel", "notes", "date", "color", "packaging", "sku",
+                   "relatedTxId", "returnLoss", "taxUnitPrice"], // Trả hàng: liên kết + lỗ | Shopee: giá đăng bán/khai thuế
     Settings:     ["key", "value"]
   };
   if (headers[name]) {
@@ -134,6 +156,11 @@ function getAllData() {
     };
     if (r.unitCost !== "" && r.unitCost !== null) tx.unitCost = Number(r.unitCost);
     if (r.unitPrice !== "" && r.unitPrice !== null) tx.unitPrice = Number(r.unitPrice);
+    // Trả hàng: chỉ gắn relatedTxId/returnLoss khi có dữ liệu, để không tạo field rác cho giao dịch buy/sell thường
+    if (r.relatedTxId !== undefined && r.relatedTxId !== "" && r.relatedTxId !== null) tx.relatedTxId = String(r.relatedTxId);
+    if (r.returnLoss !== undefined && r.returnLoss !== "" && r.returnLoss !== null) tx.returnLoss = Number(r.returnLoss);
+    // Shopee: giá đăng bán/doanh thu khai báo, chỉ gắn khi có giá trị (áp dụng cho kênh Shopee)
+    if (r.taxUnitPrice !== undefined && r.taxUnitPrice !== "" && r.taxUnitPrice !== null) tx.taxUnitPrice = Number(r.taxUnitPrice);
     transactions[pid].push(tx);
   });
 
@@ -167,10 +194,13 @@ function saveTransaction(tx) {
   sheet.appendRow([
     tx.id, tx.portfolioId, tx.type, tx.modelName, tx.brand,
     tx.qty,
-    tx.type === "buy" ? tx.unitCost : "",
-    tx.type === "sell" ? tx.unitPrice : "",
+    (tx.type === "buy" || tx.type === "return_buy") ? tx.unitCost : "",
+    (tx.type === "sell" || tx.type === "return_sell") ? tx.unitPrice : "",
     tx.channel || "", tx.notes || "", tx.date,
-    tx.color || "", tx.packaging || "", tx.sku || ""
+    tx.color || "", tx.packaging || "", tx.sku || "",
+    tx.relatedTxId || "", // Trả hàng: liên kết giao dịch gốc
+    (tx.type === "return_buy" || tx.type === "return_sell") ? Number(tx.returnLoss || 0) : "",
+    (tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null) ? Number(tx.taxUnitPrice) : "" // Shopee: giá đăng bán/khai thuế
   ]);
   return { ok: true };
 }
@@ -180,13 +210,16 @@ function updateTransaction(tx) {
   const data  = sheet.getDataRange().getValues();
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][0]) === String(tx.id)) {
-      sheet.getRange(i + 1, 1, 1, 14).setValues([[
+      sheet.getRange(i + 1, 1, 1, 17).setValues([[
         tx.id, tx.portfolioId, tx.type, tx.modelName, tx.brand,
         tx.qty,
-        tx.type === "buy" ? tx.unitCost : "",
-        tx.type === "sell" ? tx.unitPrice : "",
+        (tx.type === "buy" || tx.type === "return_buy") ? tx.unitCost : "",
+        (tx.type === "sell" || tx.type === "return_sell") ? tx.unitPrice : "",
         tx.channel || "", tx.notes || "", tx.date,
-        tx.color || "", tx.packaging || "", tx.sku || ""
+        tx.color || "", tx.packaging || "", tx.sku || "",
+        tx.relatedTxId || "",
+        (tx.type === "return_buy" || tx.type === "return_sell") ? Number(tx.returnLoss || 0) : "",
+        (tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null) ? Number(tx.taxUnitPrice) : ""
       ]]);
       return { ok: true };
     }
@@ -280,10 +313,13 @@ function replaceTransactions(data) {
     newRows.push([
       tx.id, portfolioId, tx.type, tx.modelName, tx.brand,
       tx.qty,
-      tx.type === "buy" ? tx.unitCost : "",
-      tx.type === "sell" ? tx.unitPrice : "",
+      (tx.type === "buy" || tx.type === "return_buy") ? tx.unitCost : "",
+      (tx.type === "sell" || tx.type === "return_sell") ? tx.unitPrice : "",
       tx.channel || "", tx.notes || "", tx.date,
-      tx.color || "", tx.packaging || "", tx.sku || ""
+      tx.color || "", tx.packaging || "", tx.sku || "",
+      tx.relatedTxId || "",
+      (tx.type === "return_buy" || tx.type === "return_sell") ? Number(tx.returnLoss || 0) : "",
+      (tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null) ? Number(tx.taxUnitPrice) : ""
     ]);
   });
   sheet.clear();

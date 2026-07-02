@@ -480,6 +480,7 @@ body {
 .icon-cost { color: var(--danger); }
 .icon-revenue { color: var(--green); }
 .icon-profit { color: var(--orange); }
+.icon-return { color: var(--danger); }
 
 .kpi-value {
   font-size: 28px;
@@ -690,6 +691,16 @@ body {
 .badge-sell {
   background: rgba(249, 115, 22, 0.1);
   color: var(--orange);
+}
+
+/* Trả hàng (return_buy / return_sell) — chữ đỏ + khung đỏ để phân biệt rõ với Mua/Bán */
+.badge-return {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--danger);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .text-green { color: var(--green); font-weight: 600; }
@@ -940,7 +951,9 @@ body {
 /* ================= PANEL 3: TRANSACTIONS & FORMS ================= */
 .transaction-forms-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* auto-fit để 3 form (Mua / Bán / Trả hàng) tự sắp xếp gọn theo chiều rộng màn hình,
+     thay vì cố định 2 cột khiến form thứ 3 (Trả hàng) bị rớt xuống dòng lẻ loi */
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
   gap: 24px;
 }
 
@@ -1646,6 +1659,12 @@ body {
   background: rgba(249, 115, 22, 0.1);
   color: var(--orange);
   border: 1px solid rgba(249, 115, 22, 0.2);
+}
+
+.details-tx-badge.return {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--danger);
+  border: 1px solid rgba(239, 68, 68, 0.4);
 }
 
 .details-tx-date {

@@ -101,7 +101,14 @@ function getNumericValue(formattedString) {
 
 // Thiết lập tự động định dạng khi gõ giá tiền
 function setupInputFormatting() {
-  const inputs = [document.getElementById("buyUnitCost"), document.getElementById("sellUnitPrice")];
+  const inputs = [
+    document.getElementById("buyUnitCost"),
+    document.getElementById("sellUnitPrice"),
+    document.getElementById("sellTaxUnitPrice"),
+    document.getElementById("returnLoss"),
+    document.getElementById("editTxReturnLoss"),
+    document.getElementById("editTxTaxUnitPrice")
+  ];
   inputs.forEach(input => {
     if (!input) return;
     input.addEventListener("input", (e) => {
@@ -370,8 +377,47 @@ function loadStateFromLocalStorage() {
  * Tính toán dữ liệu kho hàng hiện tại dựa trên lịch sử giao dịch mua/bán.
  * Tính giá mua trung bình theo phương pháp Bình quân Gia quyền (Weighted Average Cost).
  */
+// --- TRẢ HÀNG: Các hàm dùng chung để tính số lượng đã trả / còn có thể trả ---
+// Type mới: "return_buy" (trả hàng nhập lại NCC) và "return_sell" (khách trả hàng đã bán).
+// Cả 2 type đều có trường relatedTxId trỏ tới giao dịch "buy"/"sell" gốc bị trả.
+// Thay vì tạo thêm nhánh xử lý riêng trong FIFO, ta coi trả hàng như một khoản GIẢM TRỪ
+// số lượng hiệu lực (effective qty) của chính giao dịch gốc đó — cách này tái sử dụng
+// nguyên vẹn logic FIFO sẵn có (calculateInventory / calculateYearlyStats) mà không cần viết lại.
+
+// Gom tổng số lượng đã trả cho từng giao dịch gốc: { [relatedTxId]: tổngQtyĐãTrả }
+function computeReturnedQtyMap(txs) {
+  const map = {};
+  txs.forEach(t => {
+    if ((t.type === "return_buy" || t.type === "return_sell") && t.relatedTxId) {
+      map[t.relatedTxId] = (map[t.relatedTxId] || 0) + Number(t.qty || 0);
+    }
+  });
+  return map;
+}
+
+// Số lượng còn có thể trả của 1 giao dịch buy/sell gốc = qty gốc - tổng đã trả trước đó
+function getReturnableQty(portfolioId, tx) {
+  const txs = state.transactions[portfolioId] || [];
+  const returnedMap = computeReturnedQtyMap(txs);
+  const already = returnedMap[tx.id] || 0;
+  return Math.max(0, Number(tx.qty) - already);
+}
+
+// Danh sách giao dịch "buy" hoặc "sell" còn số lượng có thể trả > 0 — dùng cho autocomplete Form Trả hàng
+function getReturnableTransactions(portfolioId, sourceType) {
+  // sourceType: "buy" khi làm Trả hàng nhập, "sell" khi làm Trả hàng bán
+  const txs = state.transactions[portfolioId] || [];
+  const returnedMap = computeReturnedQtyMap(txs);
+  return txs
+    .filter(tx => tx.type === sourceType)
+    .map(tx => ({ ...tx, returnableQty: Math.max(0, Number(tx.qty) - (returnedMap[tx.id] || 0)) }))
+    .filter(tx => tx.returnableQty > 0);
+}
+
 function calculateInventory(portfolioId) {
   const txs = state.transactions[portfolioId] || [];
+  // Số lượng đã trả cho từng giao dịch gốc, dùng để trừ vào effective qty bên dưới
+  const returnedMap = computeReturnedQtyMap(txs);
   const inventoryMap = {};
 
   // Bước 1: Gom nhóm theo xe, tách riêng buy/sell và sắp xếp theo ngày
@@ -387,6 +433,7 @@ function calculateInventory(portfolioId) {
         buyLots: [],    // { qty, unitCost, date } — các lô mua theo thứ tự thời gian
         sells: [],      // { qty, unitPrice, date }
         totalRevenue: 0,
+        totalReturnLoss: 0, // Trả hàng: tổng khoản lỗ kèm theo (ship, bao bì hỏng...) khi trả hàng
         transactions: []
       };
     }
@@ -394,18 +441,31 @@ function calculateInventory(portfolioId) {
     inventoryMap[key].transactions.push(tx);
 
     if (tx.type === "buy") {
+      // Trả hàng nhập (return_buy) làm giảm số lượng lô này — trừ theo FIFO tự nhiên vì
+      // lô vẫn giữ nguyên vị trí ngày mua, chỉ giảm qty và do đó giảm totalBuyCost tương ứng.
+      const effectiveQty = Math.max(0, Number(tx.qty) - (returnedMap[tx.id] || 0));
       inventoryMap[key].buyLots.push({
-        qty:      Number(tx.qty),
+        qty:      effectiveQty,
         unitCost: Number(tx.unitCost),
         date:     tx.date
       });
     } else if (tx.type === "sell") {
+      // Trả hàng bán (return_sell) làm giảm số lượng đã bán hiệu lực — hàng "quay lại" tồn kho
+      // một cách tự nhiên vì FIFO sẽ tiêu thụ ít lô mua hơn, đồng thời giảm totalRevenue.
+      const effectiveQty = Math.max(0, Number(tx.qty) - (returnedMap[tx.id] || 0));
       inventoryMap[key].sells.push({
-        qty:       Number(tx.qty),
+        qty:       effectiveQty,
         unitPrice: Number(tx.unitPrice),
         date:      tx.date
       });
-      inventoryMap[key].totalRevenue += Number(tx.qty) * Number(tx.unitPrice);
+      inventoryMap[key].totalRevenue += effectiveQty * Number(tx.unitPrice);
+    }
+    // return_buy / return_sell: không tự đẩy vào buyLots/sells — tác dụng của chúng đã được
+    // gộp vào effectiveQty của giao dịch buy/sell gốc ở trên (qua returnedMap).
+    // Khoản lỗ kèm theo (tiền ship trả hàng, bao bì hỏng...) luôn làm giảm lợi nhuận,
+    // dù là trả hàng nhập hay trả hàng bán.
+    if (tx.type === "return_buy" || tx.type === "return_sell") {
+      inventoryMap[key].totalReturnLoss += Number(tx.returnLoss || 0);
     }
   });
 
@@ -464,8 +524,8 @@ function calculateInventory(portfolioId) {
     // avgCost = giá vốn TB của hàng CÒN TỒN (không phải toàn bộ lịch sử)
     const avgCost = remainingQty > 0 ? remainingCost / remainingQty : 0;
 
-    // Lợi nhuận ròng = doanh thu - COGS (FIFO)
-    const realizedProfit = item.totalRevenue - totalCOGS;
+    // Lợi nhuận ròng = doanh thu - COGS (FIFO) - khoản lỗ kèm theo trả hàng (ship, bao bì...)
+    const realizedProfit = item.totalRevenue - totalCOGS - item.totalReturnLoss;
 
     // Giá trị tồn kho theo giá vốn thực tế còn lại
     const stockValue = remainingCost;
@@ -501,7 +561,8 @@ function calculateInventory(portfolioId) {
       avgCost:        avgCost,        // ← giá vốn TB của hàng TỒN (FIFO)
       totalBuyCost:   totalBuyCost,   // ← tổng chi phí đã bỏ ra
       totalRevenue:   item.totalRevenue,
-      realizedProfit: realizedProfit, // ← lợi nhuận theo FIFO
+      realizedProfit: realizedProfit, // ← lợi nhuận theo FIFO (đã trừ khoản lỗ trả hàng nếu có)
+      totalReturnLoss: item.totalReturnLoss, // ← tổng khoản lỗ kèm theo trả hàng (ship, bao bì...)
       stockValue:     stockValue,     // ← giá trị tồn theo FIFO
       roi:            roi,            // ← ROI theo FIFO
       txCount:        item.transactions.length,
@@ -521,6 +582,7 @@ function calculateKPIs(inventory, portfolioId) {
   let totalCost = 0;
   let totalRevenue = 0;
   let totalCOGS = 0;
+  let totalReturnLoss = 0; // Trả hàng: tổng khoản lỗ kèm theo (ship, bao bì hỏng...)
   let soldCount = 0;
   let stockCount = 0;
 
@@ -528,20 +590,22 @@ function calculateKPIs(inventory, portfolioId) {
     totalInventoryValue += item.stockValue;
     totalCost           += item.totalBuyCost;
     totalRevenue        += item.totalRevenue;
-    // realizedProfit đã được tính đúng theo FIFO trong calculateInventory
-    // COGS = doanh thu - lợi nhuận ròng (được tính từ FIFO)
-    totalCOGS  += (item.totalRevenue - item.realizedProfit);
+    totalReturnLoss      += Number(item.totalReturnLoss || 0);
+    // realizedProfit = totalRevenue - COGS - totalReturnLoss (đã tính đúng theo FIFO trong calculateInventory)
+    // => COGS thực = totalRevenue - realizedProfit - totalReturnLoss
+    totalCOGS  += (item.totalRevenue - item.realizedProfit - Number(item.totalReturnLoss || 0));
     soldCount  += item.totalSold;
     stockCount += item.stock;
   });
 
-  const realizedProfit = totalRevenue - totalCOGS;
+  const realizedProfit = totalRevenue - totalCOGS - totalReturnLoss;
   const roi = totalCOGS > 0 ? (realizedProfit / totalCOGS) * 100 : 0;
 
   return {
     totalInventoryValue,
     totalCost,
     totalRevenue,
+    totalReturnLoss,
     realizedProfit,
     roi,
     stockCount,
@@ -555,14 +619,18 @@ function calculateKPIs(inventory, portfolioId) {
  */
 function calculateYearlyStats(portfolioId, inventoryList) {
   const txs = state.transactions[portfolioId] || [];
+  // Trả hàng: dùng effective qty (qty gốc - qty đã trả) giống hệt cách tính ở calculateInventory,
+  // để số liệu theo năm cũng phản ánh đúng trả hàng nhập/bán. Khoản trả được gán vào NĂM của
+  // giao dịch gốc (không phải năm trả hàng) — vì bản chất đây là điều chỉnh giảm cho giao dịch đó.
+  const returnedMap = computeReturnedQtyMap(txs);
 
   // Gom nhóm theo xe, chạy FIFO để gán fifoUnitCost cho từng giao dịch bán
   const carMap = {};
   txs.forEach(tx => {
     const key = `${tx.modelName.trim().toLowerCase()}||${tx.brand.trim().toLowerCase()}||${(tx.color || "").trim().toLowerCase()}||${(tx.packaging || "").trim().toLowerCase()}`;
     if (!carMap[key]) carMap[key] = { buys: [], sells: [] };
-    if (tx.type === "buy")  carMap[key].buys.push({ ...tx, qty: Number(tx.qty), unitCost: Number(tx.unitCost) });
-    if (tx.type === "sell") carMap[key].sells.push({ ...tx, qty: Number(tx.qty), unitPrice: Number(tx.unitPrice) });
+    if (tx.type === "buy")  carMap[key].buys.push({ ...tx, qty: Math.max(0, Number(tx.qty) - (returnedMap[tx.id] || 0)), unitCost: Number(tx.unitCost) });
+    if (tx.type === "sell") carMap[key].sells.push({ ...tx, qty: Math.max(0, Number(tx.qty) - (returnedMap[tx.id] || 0)), unitPrice: Number(tx.unitPrice) });
   });
 
   // Map txId -> fifoUnitCost để tra khi duyệt yearly
@@ -605,22 +673,32 @@ function calculateYearlyStats(portfolioId, inventoryList) {
 
     if (!yearlyData[year]) {
       yearlyData[year] = {
-        year, revenue: 0, purchaseCost: 0, cogs: 0, profit: 0, buyQty: 0, sellQty: 0
+        year, revenue: 0, purchaseCost: 0, cogs: 0, profit: 0, returnLoss: 0, buyQty: 0, sellQty: 0
       };
     }
 
     if (tx.type === "buy") {
-      yearlyData[year].purchaseCost += Number(tx.qty) * Number(tx.unitCost);
-      yearlyData[year].buyQty += Number(tx.qty);
+      const effQty = Math.max(0, Number(tx.qty) - (returnedMap[tx.id] || 0)); // trừ trả hàng nhập
+      yearlyData[year].purchaseCost += effQty * Number(tx.unitCost);
+      yearlyData[year].buyQty += effQty;
     } else if (tx.type === "sell") {
-      const rev              = Number(tx.qty) * Number(tx.unitPrice);
-      const fifoUnitCost     = fifoSellCostMap[tx.id] || 0;
-      const costOfThisSell   = Number(tx.qty) * fifoUnitCost;
+      const effQty           = Math.max(0, Number(tx.qty) - (returnedMap[tx.id] || 0)); // trừ trả hàng bán
+      const rev               = effQty * Number(tx.unitPrice);
+      const fifoUnitCost      = fifoSellCostMap[tx.id] || 0;
+      const costOfThisSell    = effQty * fifoUnitCost;
 
       yearlyData[year].revenue  += rev;
       yearlyData[year].cogs     += costOfThisSell;
       yearlyData[year].profit   += (rev - costOfThisSell);
-      yearlyData[year].sellQty  += Number(tx.qty);
+      yearlyData[year].sellQty  += effQty;
+    }
+    // return_buy / return_sell: không cộng doanh thu/chi phí riêng (đã gộp vào effQty của giao
+    // dịch gốc ở trên) — nhưng khoản lỗ kèm theo (ship, bao bì hỏng...) là 1 chi phí thực tế phát
+    // sinh tại thời điểm trả hàng, nên trừ thẳng vào lợi nhuận của NĂM XẢY RA TRẢ HÀNG.
+    if (tx.type === "return_buy" || tx.type === "return_sell") {
+      const loss = Number(tx.returnLoss || 0);
+      yearlyData[year].profit -= loss;
+      yearlyData[year].returnLoss += loss; // Lưu riêng để hiển thị minh bạch trong bảng Báo cáo năm
     }
   });
 
@@ -648,6 +726,12 @@ function renderKPIs(kpis) {
     profitEl.className = "kpi-value text-danger";
   }
   document.getElementById("sub-net-profit").innerText = `Tỷ suất ROI thực tế: ${kpis.roi.toFixed(1)}%`;
+
+  // Trả hàng: tổng khoản lỗ kèm theo (ship, bao bì hỏng...) đã trừ vào lợi nhuận ròng ở trên
+  const returnLossEl = document.getElementById("val-return-loss");
+  if (returnLossEl) {
+    returnLossEl.innerText = formatCurrency(kpis.totalReturnLoss || 0);
+  }
 }
 
 // Nạp danh sách các danh mục vào phần chọn
@@ -1021,19 +1105,30 @@ function renderInventoryTable(inventory) {
     } else {
       itemTxs.forEach(tx => {
         const isBuy = tx.type === "buy";
-        const price = isBuy ? tx.unitCost : tx.unitPrice;
+        const isReturnBuy = tx.type === "return_buy";
+        const isReturnSell = tx.type === "return_sell";
+        const price = (isBuy || isReturnBuy) ? Number(tx.unitCost) : Number(tx.unitPrice);
         const total = tx.qty * price;
-        const typeText = isBuy ? "Mua" : "Bán";
-        const typeCls = isBuy ? "buy" : "sell";
+
+        let typeText = "Bán";
+        let typeCls = "sell";
+        if (isBuy) { typeText = "Mua"; typeCls = "buy"; }
+        else if (isReturnBuy) { typeText = "Hoàn"; typeCls = "return"; }
+        else if (isReturnSell) { typeText = "Hoàn"; typeCls = "return"; }
+
         const notesText = tx.notes ? `<span class="details-tx-notes">(${tx.notes})</span>` : "";
-        const channelText = !isBuy && tx.channel ? `<span class="badge badge-in-stock" style="font-size:9px;margin-right:8px;">${tx.channel}</span>` : "";
+        const channelText = (tx.type === "sell" || isReturnSell) && tx.channel ? `<span class="badge badge-in-stock" style="font-size:9px;margin-right:8px;">${tx.channel}</span>` : "";
+        // Trả hàng: hiển thị thêm khoản lỗ kèm theo (ship, bao bì...) nếu có, và liên kết giao dịch gốc
+        const returnExtra = (isReturnBuy || isReturnSell)
+          ? `<span class="details-tx-notes">(Liên kết #${String(tx.relatedTxId || "").slice(-6)}${Number(tx.returnLoss || 0) > 0 ? `, lỗ kèm theo: -${formatCurrency(Number(tx.returnLoss))}` : ''})</span>`
+          : "";
         txItemsHtml += `
           <div class="details-tx-item">
             <div class="details-tx-left">
               <span class="details-tx-badge ${typeCls}">${typeText}</span>
               <span class="details-tx-date">${formatDate(tx.date)}</span>
               <span class="details-tx-qty-price">SL: <strong>${tx.qty}</strong> @ <strong>${formatCurrency(price)}</strong></span>
-              ${notesText}
+              ${notesText}${returnExtra}
             </div>
             <div class="details-tx-right">
               ${channelText}
@@ -1217,9 +1312,9 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
     txs = txs.filter(tx => String(new Date(tx.date).getFullYear()) === filterYear);
   }
 
-  // Lọc theo kênh bán (chỉ áp dụng cho giao dịch bán, giao dịch mua không có kênh nên luôn giữ lại nếu lọc "all")
+  // Lọc theo kênh bán (áp dụng cho giao dịch bán và trả hàng bán, vì cả 2 đều có trường channel)
   if (filterChannel !== "all") {
-    txs = txs.filter(tx => tx.type === "sell" && tx.channel === filterChannel);
+    txs = txs.filter(tx => (tx.type === "sell" || tx.type === "return_sell") && tx.channel === filterChannel);
   }
 
   // Sắp xếp theo ngày theo lựa chọn (mới nhất / cũ nhất)
@@ -1237,18 +1332,51 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
     const row = document.createElement("tr");
     
     const isBuy = tx.type === "buy";
+    const isReturnBuy = tx.type === "return_buy";
+    const isReturnSell = tx.type === "return_sell";
     // Với giao dịch bán qua Shopee: nếu có taxUnitPrice (giá đăng bán/doanh thu Shopee) thì ưu tiên hiển thị giá này
-    const isShopee = !isBuy && tx.channel === "Shopee";
-    const displayUnitPrice = isBuy
+    const isShopee = tx.type === "sell" && tx.channel === "Shopee";
+    const displayUnitPrice = (isBuy || isReturnBuy)
       ? Number(tx.unitCost)
       : (isShopee && tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null && tx.taxUnitPrice > 0)
         ? Number(tx.taxUnitPrice)
         : Number(tx.unitPrice);
     const totalAmount = Number(tx.qty) * displayUnitPrice;
-    
+
+    // Mã ngắn của giao dịch gốc để hiển thị badge liên kết trong 2 nhánh trả hàng bên dưới
+    const relatedShort = tx.relatedTxId ? `#${String(tx.relatedTxId).slice(-6)}` : "—";
+
     let detailHtml = "";
     if (isBuy) {
       detailHtml = `<span style="font-size:12px; color:var(--text-muted)">${tx.notes || "—"}</span>`;
+    } else if (isReturnBuy) {
+      // Trả hàng nhập: hiển thị badge trả hàng + liên kết tới giao dịch mua gốc + khoản lỗ kèm theo (nếu có)
+      const lossText = Number(tx.returnLoss || 0) > 0
+        ? `<span style="font-size:11px;color:var(--danger);">Lỗ kèm theo: -${formatCurrency(Number(tx.returnLoss))}</span>`
+        : '';
+      detailHtml = `
+        <div style="display:flex; flex-direction:column;">
+          <span class="badge badge-return" style="align-self:flex-start; margin-bottom:2px;">
+            <i data-lucide="rotate-ccw" style="width:10px;height:10px;"></i> Trả NCC · ${relatedShort}
+          </span>
+          ${lossText}
+          ${tx.notes ? `<span style="font-size:11px;color:var(--text-muted);">${tx.notes}</span>` : ''}
+        </div>
+      `;
+    } else if (isReturnSell) {
+      // Trả hàng bán: hiển thị badge trả hàng + kênh gốc + liên kết + khoản lỗ kèm theo (nếu có)
+      const lossText = Number(tx.returnLoss || 0) > 0
+        ? `<span style="font-size:11px;color:var(--danger);">Lỗ kèm theo: -${formatCurrency(Number(tx.returnLoss))}</span>`
+        : '';
+      detailHtml = `
+        <div style="display:flex; flex-direction:column;">
+          <span class="badge badge-return" style="align-self:flex-start; margin-bottom:2px;">
+            <i data-lucide="rotate-ccw" style="width:10px;height:10px;"></i> Khách trả (${tx.channel || '—'}) · ${relatedShort}
+          </span>
+          ${lossText}
+          ${tx.notes ? `<span style="font-size:11px;color:var(--text-muted);">${tx.notes}</span>` : ''}
+        </div>
+      `;
     } else {
       // Bán: Hiển thị kênh bán + Lợi nhuận của đơn bán này dựa trên giá mua trung bình
       const key = `${tx.modelName.toLowerCase()}||${tx.brand.toLowerCase()}||${(tx.color || "").toLowerCase()}||${(tx.packaging || "").toLowerCase()}`;
@@ -1268,11 +1396,17 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
       `;
     }
 
+    let typeLabel = 'BÁN (Xuất)';
+    let typeBadgeClass = 'badge-sell';
+    if (isBuy) { typeLabel = 'MUA (Nhập)'; typeBadgeClass = 'badge-buy'; }
+    else if (isReturnBuy) { typeLabel = 'HOÀN (Trả NCC)'; typeBadgeClass = 'badge-return'; }
+    else if (isReturnSell) { typeLabel = 'HOÀN (Khách trả)'; typeBadgeClass = 'badge-return'; }
+
     row.innerHTML = `
       <td>${formatDate(tx.date)}</td>
       <td>
-        <span class="badge ${isBuy ? 'badge-buy' : 'badge-sell'}">
-          ${isBuy ? 'MUA (Nhập)' : 'BÁN (Xuất)'}
+        <span class="badge ${typeBadgeClass}">
+          ${typeLabel}
         </span>
       </td>
       <td>
@@ -1316,7 +1450,7 @@ function renderYearlyReportTable(yearlyStats) {
   tbody.innerHTML = "";
 
   if (yearlyStats.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted" style="padding: 30px 0;">Chưa có đủ số liệu giao dịch theo năm. Vui lòng thêm các giao dịch mua/bán ở các năm khác nhau.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted" style="padding: 30px 0;">Chưa có đủ số liệu giao dịch theo năm. Vui lòng thêm các giao dịch mua/bán ở các năm khác nhau.</td></tr>`;
     return;
   }
 
@@ -1330,6 +1464,7 @@ function renderYearlyReportTable(yearlyStats) {
       <td class="text-bold" style="font-size: 16px; color:#a5b4fc">${stat.year}</td>
       <td class="text-green text-bold">${formatCurrency(stat.revenue)}</td>
       <td>${formatCurrency(stat.cogs)}</td>
+      <td class="text-danger">${stat.returnLoss > 0 ? `-${formatCurrency(stat.returnLoss)}` : '—'}</td>
       <td class="${stat.profit >= 0 ? 'text-green' : 'text-danger'} text-bold">${formatCurrency(stat.profit)}</td>
       <td class="text-center">${stat.buyQty} chiếc</td>
       <td class="text-center">${stat.sellQty} chiếc</td>
@@ -2284,6 +2419,102 @@ function quickSellCar(modelName, brand, color = "", packaging = "") {
   }, 100);
 }
 
+// --- TRẢ HÀNG: Autocomplete tìm giao dịch gốc (buy/sell) để ghi nhận trả hàng ---
+function setupReturnAutocomplete() {
+  const typeSelect = document.getElementById("returnType");
+  const textInput = document.getElementById("returnTxInput");
+  const hiddenInput = document.getElementById("returnTxSelect");
+  const suggestionsBox = document.getElementById("returnTxSuggestions");
+  const infoBubble = document.getElementById("returnTxInfo");
+  if (!typeSelect || !textInput || !hiddenInput || !suggestionsBox) return;
+
+  function clearSelection() {
+    if (hiddenInput.value !== "") {
+      hiddenInput.value = "";
+      if (infoBubble) infoBubble.classList.add("hidden");
+    }
+  }
+
+  // "return_buy" tìm trong giao dịch "buy" gốc; "return_sell" tìm trong giao dịch "sell" gốc
+  function currentSourceType() {
+    return typeSelect.value === "return_buy" ? "buy" : "sell";
+  }
+
+  textInput.addEventListener("input", () => {
+    const val = textInput.value.trim().toLowerCase();
+    suggestionsBox.innerHTML = "";
+    clearSelection();
+
+    if (!val) {
+      suggestionsBox.classList.add("hidden");
+      return;
+    }
+
+    // Chỉ hiện các giao dịch gốc còn số lượng có thể trả > 0
+    const candidates = getReturnableTransactions(state.activePortfolioId, currentSourceType());
+    const matches = candidates.filter(tx =>
+      tx.modelName.toLowerCase().includes(val) ||
+      tx.brand.toLowerCase().includes(val) ||
+      formatDate(tx.date).includes(val)
+    ).slice(0, 8);
+
+    if (matches.length === 0) {
+      suggestionsBox.innerHTML = `<div class="suggestion-item" style="cursor:default;">Không tìm thấy giao dịch phù hợp còn có thể trả</div>`;
+      suggestionsBox.classList.remove("hidden");
+      return;
+    }
+
+    matches.forEach(tx => {
+      const priceVal = tx.type === "buy" ? Number(tx.unitCost) : Number(tx.unitPrice);
+      const div = document.createElement("div");
+      div.className = "suggestion-item";
+      div.innerHTML = `
+        <span class="suggest-name">${tx.modelName}
+          <span class="badge badge-in-stock" style="font-size: 9px; margin-left: 5px;">Còn ${tx.returnableQty} có thể trả</span>
+          ${tx.color ? `<span class="badge badge-secondary" style="font-size: 9px; margin-left: 5px;">${tx.color}</span>` : ''}
+        </span>
+        <span class="suggest-brand">${tx.brand} · ${formatDate(tx.date)} · ${formatCurrency(priceVal)}</span>
+      `;
+
+      div.onclick = () => {
+        textInput.value = `${tx.modelName} (${formatDate(tx.date)})`;
+        hiddenInput.value = tx.id;
+
+        const qtyInput = document.getElementById("returnQty");
+        if (qtyInput) qtyInput.max = tx.returnableQty;
+
+        if (infoBubble) {
+          infoBubble.innerHTML = `Số lượng gốc: <strong>${tx.qty}</strong> | Còn có thể trả: <strong>${tx.returnableQty}</strong> | ${tx.type === "buy" ? "Giá nhập" : "Giá bán"}: <strong>${formatCurrency(priceVal)}</strong>`;
+          infoBubble.classList.remove("hidden");
+        }
+        suggestionsBox.classList.add("hidden");
+      };
+
+      suggestionsBox.appendChild(div);
+    });
+
+    suggestionsBox.classList.remove("hidden");
+  });
+
+  textInput.addEventListener("focus", () => {
+    if (textInput.value.trim()) textInput.dispatchEvent(new Event("input"));
+  });
+
+  // Đổi loại trả hàng (Nhập/Bán) → nguồn tìm kiếm đổi (buy/sell) nên phải reset lựa chọn cũ
+  typeSelect.addEventListener("change", () => {
+    textInput.value = "";
+    clearSelection();
+    suggestionsBox.classList.add("hidden");
+    suggestionsBox.innerHTML = "";
+  });
+
+  document.addEventListener("click", (e) => {
+    if (e.target !== textInput && e.target !== suggestionsBox && !suggestionsBox.contains(e.target)) {
+      suggestionsBox.classList.add("hidden");
+    }
+  });
+}
+
 // --- THỰC THI THÊM/XÓA CÁC ĐỐI TƯỢNG (PORTFOLIO & TRANSACTIONS) ---
 
 // Đăng ký các Form Submit
@@ -2431,18 +2662,115 @@ function setupFormSubmissions() {
   });
 }
 
+// Xử lý submit Form Trả hàng (return_buy / return_sell)
+function setupReturnFormSubmission() {
+  const returnForm = document.getElementById("returnForm");
+  if (!returnForm) return;
+
+  returnForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+
+    const returnType = document.getElementById("returnType").value; // "return_buy" | "return_sell"
+    const relatedTxId = document.getElementById("returnTxSelect").value;
+    const qty = Number(document.getElementById("returnQty").value);
+    const returnLoss = getNumericValue(document.getElementById("returnLoss").value) || 0; // Khoản lỗ kèm theo (ship, bao bì...)
+    const date = window.datePickers.returnDate.getValue();
+    const notes = document.getElementById("returnNotes").value.trim();
+
+    if (!relatedTxId) {
+      alert("Vui lòng chọn giao dịch gốc cần trả hàng!");
+      return;
+    }
+    if (!date || qty <= 0) {
+      alert("Vui lòng điền đầy đủ và chính xác thông tin trả hàng!");
+      return;
+    }
+
+    const originalTx = (state.transactions[state.activePortfolioId] || []).find(tx => tx.id === relatedTxId);
+    if (!originalTx) {
+      alert("Không tìm thấy giao dịch gốc, vui lòng chọn lại!");
+      return;
+    }
+
+    // Không cho trả nhiều hơn số lượng gốc còn có thể trả (trừ đi các lần đã trả trước đó)
+    const returnableQty = getReturnableQty(state.activePortfolioId, originalTx);
+    if (qty > returnableQty) {
+      alert(`Số lượng trả không hợp lệ! Chỉ có thể trả tối đa ${returnableQty} chiếc cho giao dịch này.`);
+      return;
+    }
+
+    const newTx = {
+      id: generateUniqueId("tx"),
+      type: returnType,
+      relatedTxId: originalTx.id,
+      modelName: originalTx.modelName,
+      brand: originalTx.brand,
+      color: originalTx.color || "",
+      packaging: originalTx.packaging || "",
+      sku: originalTx.sku || generateSKU(originalTx.brand, originalTx.modelName, originalTx.color, originalTx.packaging),
+      qty,
+      returnLoss, // Khoản lỗ kèm theo (ship, bao bì hỏng...) — luôn làm giảm lợi nhuận dù trả nhập hay trả bán
+      date,
+      notes
+    };
+
+    if (returnType === "return_buy") {
+      // Trả hàng nhập: copy lại giá vốn gốc để tính đúng phần chi phí được hoàn (giảm totalBuyCost)
+      newTx.unitCost = Number(originalTx.unitCost);
+    } else {
+      // Trả hàng bán: copy lại giá bán + kênh gốc để tính đúng phần doanh thu bị hoàn
+      newTx.unitPrice = Number(originalTx.unitPrice);
+      newTx.channel = originalTx.channel || "";
+    }
+
+    if (!state.transactions[state.activePortfolioId]) {
+      state.transactions[state.activePortfolioId] = [];
+    }
+    state.transactions[state.activePortfolioId].push(newTx);
+    dbSaveTransaction(newTx);
+
+    returnForm.reset();
+    document.getElementById("returnTxSelect").value = "";
+    document.getElementById("returnLoss").value = "0";
+    const infoBubble = document.getElementById("returnTxInfo");
+    if (infoBubble) infoBubble.classList.add("hidden");
+    window.datePickers.returnDate.setValue(dateToISO(new Date()));
+
+    alert(`Đã ghi nhận ${returnType === "return_buy" ? "trả hàng nhập" : "trả hàng bán"} thành công cho ${qty} chiếc ${originalTx.modelName}!`);
+    refreshApplicationData();
+  });
+}
+
 // Xóa một giao dịch khỏi lịch sử
 function deleteTransaction(txId) {
-  if (!confirm("Bạn có chắc chắn muốn xóa giao dịch này? Hành động này sẽ cập nhật lại toàn bộ tồn kho và lợi nhuận.")) {
+  const txs = state.transactions[state.activePortfolioId] || [];
+  const targetTx = txs.find(tx => tx.id === txId);
+
+  // Trả hàng: nếu giao dịch bị xóa là 1 giao dịch buy/sell gốc đã có trả hàng liên kết
+  // (relatedTxId trỏ tới nó), ta CHỌN CÁCH XÓA LUÔN (cascade) các giao dịch trả hàng đó,
+  // thay vì chỉ chặn/cảnh báo suông. Lý do: nếu để lại các bản ghi trả hàng "mồ côi"
+  // (relatedTxId trỏ tới 1 giao dịch không còn tồn tại), computeReturnedQtyMap() vẫn sẽ cộng
+  // dồn số lượng đã trả cho 1 id không ai dùng tới nữa — vô hại về mặt tính toán, nhưng để lại
+  // dữ liệu rác gây khó hiểu khi xem lịch sử. Cascade-delete + cảnh báo rõ trước khi xóa là lựa
+  // chọn an toàn và sạch dữ liệu hơn.
+  const linkedReturns = targetTx
+    ? txs.filter(tx => (tx.type === "return_buy" || tx.type === "return_sell") && tx.relatedTxId === txId)
+    : [];
+
+  const confirmMsg = linkedReturns.length > 0
+    ? `Giao dịch này có ${linkedReturns.length} lần trả hàng liên kết. Xóa giao dịch gốc sẽ XÓA LUÔN các giao dịch trả hàng liên quan. Bạn có chắc chắn muốn tiếp tục?`
+    : "Bạn có chắc chắn muốn xóa giao dịch này? Hành động này sẽ cập nhật lại toàn bộ tồn kho và lợi nhuận.";
+
+  if (!confirm(confirmMsg)) {
     return;
   }
 
-  const txs = state.transactions[state.activePortfolioId] || [];
-  const updatedTxs = txs.filter(tx => tx.id !== txId);
-  
+  const idsToDelete = new Set([txId, ...linkedReturns.map(t => t.id)]);
+  const updatedTxs = txs.filter(tx => !idsToDelete.has(tx.id));
+
   state.transactions[state.activePortfolioId] = updatedTxs;
-  dbDeleteTransaction(txId);
-  
+  idsToDelete.forEach(id => dbDeleteTransaction(id));
+
   refreshApplicationData();
 }
 
@@ -2536,19 +2864,23 @@ function setupCsvExport() {
 
     // Tạo tiêu đề file CSV (Bản mã UTF-8 với BOM để Excel đọc được dấu tiếng Việt)
     let csvContent = "\uFEFF";
-    csvContent += "ID Giao Dịch,Loại Giao Dịch,Tên Xe,Hãng Sản Xuất,Màu Sắc,Đóng Gói,Số Lượng,Đơn Giá,Ngày Giao Dịch,Kênh Bán Hàng,Ghi Chú\n";
+    csvContent += "ID Giao Dịch,Loại Giao Dịch,Tên Xe,Hãng Sản Xuất,Màu Sắc,Đóng Gói,Số Lượng,Đơn Giá,Ngày Giao Dịch,Kênh Bán Hàng,Ghi Chú,Giao Dịch Gốc Liên Kết,Khoản Lỗ Trả Hàng\n";
+
+    const typeLabels = { buy: "Mua", sell: "Bán", return_buy: "Hoàn (Trả NCC)", return_sell: "Hoàn (Khách trả)" };
 
     txs.forEach(t => {
-      const typeLabel = t.type === "buy" ? "Mua" : "Bán";
-      const priceVal = t.type === "buy" ? t.unitCost : t.unitPrice;
-      const channelLabel = t.type === "sell" ? t.channel : "";
+      const typeLabel = typeLabels[t.type] || t.type;
+      const priceVal = (t.type === "buy" || t.type === "return_buy") ? t.unitCost : t.unitPrice;
+      const channelLabel = (t.type === "sell" || t.type === "return_sell") ? (t.channel || "") : "";
       
       // Xử lý dấu phẩy trong note tránh hỏng cột CSV
       const noteClean = t.notes ? t.notes.replace(/"/g, '""') : "";
       const colorClean = t.color ? t.color.replace(/"/g, '""') : "";
       const pkgClean = t.packaging ? t.packaging.replace(/"/g, '""') : "";
+      const relatedTxClean = t.relatedTxId || "";
+      const returnLossClean = (t.type === "return_buy" || t.type === "return_sell") ? Number(t.returnLoss || 0) : "";
 
-      csvContent += `"${t.id}","${typeLabel}","${t.modelName.replace(/"/g, '""')}","${t.brand.replace(/"/g, '""')}","${colorClean}","${pkgClean}","${t.qty}","${priceVal}","${t.date}","${channelLabel}","${noteClean}"\n`;
+      csvContent += `"${t.id}","${typeLabel}","${t.modelName.replace(/"/g, '""')}","${t.brand.replace(/"/g, '""')}","${colorClean}","${pkgClean}","${t.qty}","${priceVal}","${t.date}","${channelLabel}","${noteClean}","${relatedTxClean}","${returnLossClean}"\n`;
     });
 
     // Tạo đường dẫn tải xuống
@@ -2602,10 +2934,25 @@ function setupCsvImport() {
           // Hàm làm sạch dấu ngoặc kép bọc ngoài
           const clean = str => str ? str.replace(/^"|"$/g, '').trim() : "";
 
-          let id, typeLabel, modelName, brand, color = "", packaging = "", qty, price, date, channel = "Facebook", notes = "";
+          let id, typeLabel, modelName, brand, color = "", packaging = "", qty, price, date, channel = "Facebook", notes = "", relatedTxId = "", returnLossRaw = "";
 
-          if (columns.length >= 11) {
-            // Định dạng mới (11 cột)
+          if (columns.length >= 13) {
+            // Định dạng mới nhất (13 cột — có hỗ trợ Trả hàng)
+            id = clean(columns[0]) || generateUniqueId("tx");
+            typeLabel = clean(columns[1]).toLowerCase();
+            modelName = clean(columns[2]);
+            brand = clean(columns[3]);
+            color = clean(columns[4]);
+            packaging = clean(columns[5]);
+            qty = Number(clean(columns[6]));
+            price = Number(clean(columns[7]));
+            date = clean(columns[8]);
+            channel = clean(columns[9]) || "Facebook";
+            notes = clean(columns[10]) || "";
+            relatedTxId = clean(columns[11]) || "";
+            returnLossRaw = clean(columns[12]) || "";
+          } else if (columns.length >= 11) {
+            // Định dạng cũ hơn (11 cột)
             id = clean(columns[0]) || generateUniqueId("tx");
             typeLabel = clean(columns[1]).toLowerCase();
             modelName = clean(columns[2]);
@@ -2639,7 +2986,23 @@ function setupCsvImport() {
             continue;
           }
 
-          const type = (typeLabel === "mua" || typeLabel === "buy") ? "buy" : "sell";
+          // Nhận diện loại giao dịch — hỗ trợ cả nhãn tiếng Việt (Mua/Bán/Hoàn...) lẫn giá trị type gốc
+          let type = "sell";
+          if (typeLabel === "mua" || typeLabel === "buy") {
+            type = "buy";
+          } else if (typeLabel.includes("hoàn") && typeLabel.includes("ncc") || typeLabel === "return_buy") {
+            type = "return_buy";
+          } else if (typeLabel.includes("hoàn") || typeLabel === "return_sell") {
+            type = "return_sell";
+          } else if (typeLabel === "sell" || typeLabel === "bán") {
+            type = "sell";
+          }
+
+          // Giao dịch Trả hàng bắt buộc phải có relatedTxId hợp lệ để không phá vỡ FIFO — nếu thiếu, bỏ qua dòng này
+          if ((type === "return_buy" || type === "return_sell") && !relatedTxId) {
+            errorCount++;
+            continue;
+          }
 
           const tx = {
             id: id.startsWith("tx-") ? id : generateUniqueId("tx"),
@@ -2655,9 +3018,18 @@ function setupCsvImport() {
 
           if (type === "buy") {
             tx.unitCost = price;
-          } else {
+          } else if (type === "sell") {
             tx.unitPrice = price;
             tx.channel = ["Facebook", "Shopee", "Trực tiếp"].includes(channel) ? channel : "Trực tiếp";
+          } else if (type === "return_buy") {
+            tx.relatedTxId = relatedTxId;
+            tx.unitCost = price;
+            tx.returnLoss = Number(returnLossRaw) || 0;
+          } else if (type === "return_sell") {
+            tx.relatedTxId = relatedTxId;
+            tx.unitPrice = price;
+            tx.channel = ["Facebook", "Shopee", "Trực tiếp"].includes(channel) ? channel : "Trực tiếp";
+            tx.returnLoss = Number(returnLossRaw) || 0;
           }
 
           newTxs.push(tx);
@@ -2748,8 +3120,8 @@ function setupSystemSettings() {
     const symbol = state.currency === "VND" ? "vnd" : (state.currency === "USD" ? "$" : "€");
     document.getElementById("buyCurrencyAddon").innerText = symbol;
     document.getElementById("sellCurrencyAddon").innerText = symbol;
-
-    // Load lại toàn bộ số liệu tiền trên giao diện
+    const returnLossAddon = document.getElementById("returnLossCurrencyAddon");
+    if (returnLossAddon) returnLossAddon.innerText = symbol;
     refreshApplicationData();
   });
 }
@@ -3340,6 +3712,8 @@ function openEditTxModal(txId) {
   const tx = txs.find(t => t.id === txId);
   if (!tx) return;
 
+  const isReturn = tx.type === "return_buy" || tx.type === "return_sell";
+
   document.getElementById("editTxId").value = tx.id;
   document.getElementById("editTxType").value = tx.type;
   document.getElementById("editTxModelName").value = tx.modelName;
@@ -3348,17 +3722,57 @@ function openEditTxModal(txId) {
   document.getElementById("editTxPackaging").value = tx.packaging || "";
   window.datePickers.editTxDate.setValue(tx.date);
   document.getElementById("editTxQty").value = tx.qty;
-  
+
   const priceInput = document.getElementById("editTxPrice");
-  const priceVal = tx.type === "buy" ? tx.unitCost : tx.unitPrice;
+  const priceVal = (tx.type === "buy" || tx.type === "return_buy") ? Number(tx.unitCost) : Number(tx.unitPrice);
   priceInput.value = formatNumberInput(priceVal.toString());
 
   const channelGroup = document.getElementById("editTxChannelGroup");
   const channelSelect = document.getElementById("editTxChannel");
   const taxGroup = document.getElementById("editTxTaxUnitPriceGroup");
   const taxInput = document.getElementById("editTxTaxUnitPrice");
+  const modelNameInput = document.getElementById("editTxModelName");
+  const brandInput = document.getElementById("editTxBrand");
+  const colorInput = document.getElementById("editTxColor");
+  const packagingInput = document.getElementById("editTxPackaging");
+  const returnInfoGroup = document.getElementById("editTxReturnInfoGroup");
+  const returnInfoBox = document.getElementById("editTxReturnInfo");
+  const returnLossGroup = document.getElementById("editTxReturnLossGroup");
+  const returnLossInput = document.getElementById("editTxReturnLoss");
 
-  if (tx.type === "sell") {
+  if (isReturn) {
+    // Trả hàng: khóa các trường mẫu xe / giá / kênh vì chúng phải khớp với giao dịch gốc để
+    // FIFO (computeReturnedQtyMap) tính đúng — chỉ cho sửa Số lượng, Ngày, Ghi chú, Khoản lỗ.
+    modelNameInput.readOnly = true;
+    brandInput.readOnly = true;
+    colorInput.readOnly = true;
+    packagingInput.readOnly = true;
+    priceInput.readOnly = true;
+    channelGroup.style.display = "none";
+    channelSelect.required = false;
+    taxGroup.style.display = "none";
+    taxInput.value = "";
+    document.getElementById("editTxPriceLabel").innerHTML =
+      (tx.type === "return_buy" ? "Giá nhập gốc / chiếc" : "Giá bán gốc / chiếc") + " (không thể sửa)";
+
+    const originalTx = txs.find(t => t.id === tx.relatedTxId);
+    const returnableQty = getReturnableQty(state.activePortfolioId, originalTx || { id: tx.relatedTxId, qty: 0 }) + Number(tx.qty || 0);
+    document.getElementById("editTxQty").max = returnableQty;
+    returnInfoBox.innerHTML = `Liên kết giao dịch gốc: <strong>#${String(tx.relatedTxId || "").slice(-6)}</strong>${originalTx ? ` (${originalTx.modelName})` : ""} · Số lượng tối đa có thể sửa tới: <strong>${returnableQty}</strong>`;
+    returnInfoGroup.classList.remove("hidden");
+    returnLossGroup.classList.remove("hidden");
+    returnLossInput.value = formatNumberInput(String(Number(tx.returnLoss || 0)));
+  } else {
+    modelNameInput.readOnly = false;
+    brandInput.readOnly = false;
+    colorInput.readOnly = false;
+    packagingInput.readOnly = false;
+    priceInput.readOnly = false;
+    returnInfoGroup.classList.add("hidden");
+    returnLossGroup.classList.add("hidden");
+  }
+
+  if (!isReturn && tx.type === "sell") {
     channelGroup.style.display = "block";
     channelSelect.value = tx.channel || "Facebook";
     channelSelect.required = true;
@@ -3382,7 +3796,7 @@ function openEditTxModal(txId) {
         taxInput.value = "";
       }
     };
-  } else {
+  } else if (!isReturn) {
     channelGroup.style.display = "none";
     channelSelect.required = false;
     document.getElementById("editTxPriceLabel").innerHTML = "Giá mua / chiếc <span class='required'>*</span>";
@@ -3433,58 +3847,91 @@ function setupEditTxModalHandlers() {
 
     const txId = document.getElementById("editTxId").value;
     const txType = document.getElementById("editTxType").value;
+    const isReturn = txType === "return_buy" || txType === "return_sell";
     const date = window.datePickers.editTxDate.getValue();
     const qty = Number(document.getElementById("editTxQty").value);
-    const price = getNumericValue(priceInput.value);
+    const notes = document.getElementById("editTxNotes").value.trim();
+
+    const txs = state.transactions[state.activePortfolioId] || [];
+    const txIndex = txs.findIndex(t => t.id === txId);
+    if (txIndex === -1) return;
+
+    if (isReturn) {
+      // Trả hàng: chỉ cho sửa Số lượng, Ngày, Ghi chú, Khoản lỗ — giữ nguyên mẫu xe/giá/kênh
+      // để không phá vỡ liên kết relatedTxId dùng trong FIFO (computeReturnedQtyMap).
+      if (!date || qty <= 0) {
+        alert("Vui lòng nhập đầy đủ thông tin hợp lệ!");
+        return;
+      }
+
+      const originalTx = txs.find(t => t.id === txs[txIndex].relatedTxId);
+      if (originalTx) {
+        // Giới hạn = số lượng còn có thể trả (chưa tính lần trả này) + số lượng hiện tại của chính nó
+        const returnableExcludingSelf = getReturnableQty(state.activePortfolioId, originalTx) + Number(txs[txIndex].qty);
+        if (qty > returnableExcludingSelf) {
+          alert(`Số lượng trả không hợp lệ! Chỉ có thể sửa tối đa ${returnableExcludingSelf} chiếc cho giao dịch này.`);
+          return;
+        }
+      }
+
+      const returnLoss = getNumericValue(document.getElementById("editTxReturnLoss").value) || 0;
+
+      txs[txIndex].date = date;
+      txs[txIndex].qty = qty;
+      txs[txIndex].notes = notes;
+      txs[txIndex].returnLoss = returnLoss;
+
+      dbUpdateTransaction(txs[txIndex]);
+      closeEditTxModal();
+      alert("Đã cập nhật giao dịch trả hàng thành công!");
+      refreshApplicationData();
+      return;
+    }
+
+    const price = getNumericValue(document.getElementById("editTxPrice").value);
     const modelName = document.getElementById("editTxModelName").value.trim();
     const brand = document.getElementById("editTxBrand").value.trim();
     const color = document.getElementById("editTxColor").value.trim();
     const packaging = document.getElementById("editTxPackaging").value.trim();
-    const notes = document.getElementById("editTxNotes").value.trim();
 
     if (!date || qty <= 0 || price < 0 || !modelName) {
       alert("Vui lòng nhập đầy đủ thông tin hợp lệ!");
       return;
     }
 
-    const txs = state.transactions[state.activePortfolioId] || [];
-    const txIndex = txs.findIndex(t => t.id === txId);
+    const oldKey = buildCarImageKey(txs[txIndex].modelName, txs[txIndex].brand, txs[txIndex].color, txs[txIndex].packaging);
+    const newKey = buildCarImageKey(modelName, brand, color, packaging);
+    migrateCarImageKey(oldKey, newKey);
 
-    if (txIndex !== -1) {
-      const oldKey = buildCarImageKey(txs[txIndex].modelName, txs[txIndex].brand, txs[txIndex].color, txs[txIndex].packaging);
-      const newKey = buildCarImageKey(modelName, brand, color, packaging);
-      migrateCarImageKey(oldKey, newKey);
+    txs[txIndex].modelName = modelName;
+    txs[txIndex].brand = brand;
+    txs[txIndex].color = color;
+    txs[txIndex].packaging = packaging;
+    txs[txIndex].date = date;
+    txs[txIndex].qty = qty;
 
-      txs[txIndex].modelName = modelName;
-      txs[txIndex].brand = brand;
-      txs[txIndex].color = color;
-      txs[txIndex].packaging = packaging;
-      txs[txIndex].date = date;
-      txs[txIndex].qty = qty;
-      
-      if (txType === "buy") {
-        txs[txIndex].unitCost = price;
+    if (txType === "buy") {
+      txs[txIndex].unitCost = price;
+    } else {
+      txs[txIndex].unitPrice = price;
+      const newChannel = document.getElementById("editTxChannel").value;
+      txs[txIndex].channel = newChannel;
+
+      // Cập nhật giá đăng bán Shopee nếu kênh là Shopee, ngược lại xóa trường này
+      if (newChannel === "Shopee") {
+        const taxVal = getNumericValue(document.getElementById("editTxTaxUnitPrice").value);
+        txs[txIndex].taxUnitPrice = taxVal > 0 ? taxVal : null;
       } else {
-        txs[txIndex].unitPrice = price;
-        const newChannel = document.getElementById("editTxChannel").value;
-        txs[txIndex].channel = newChannel;
-
-        // Cập nhật giá đăng bán Shopee nếu kênh là Shopee, ngược lại xóa trường này
-        if (newChannel === "Shopee") {
-          const taxVal = getNumericValue(document.getElementById("editTxTaxUnitPrice").value);
-          txs[txIndex].taxUnitPrice = taxVal > 0 ? taxVal : null;
-        } else {
-          txs[txIndex].taxUnitPrice = null;
-        }
+        txs[txIndex].taxUnitPrice = null;
       }
-      txs[txIndex].notes = notes;
-      txs[txIndex].sku = generateSKU(brand, modelName, color, packaging);
-
-      dbUpdateTransaction(txs[txIndex]);
-      closeEditTxModal();
-      alert("Đã cập nhật giao dịch thành công!");
-      refreshApplicationData();
     }
+    txs[txIndex].notes = notes;
+    txs[txIndex].sku = generateSKU(brand, modelName, color, packaging);
+
+    dbUpdateTransaction(txs[txIndex]);
+    closeEditTxModal();
+    alert("Đã cập nhật giao dịch thành công!");
+    refreshApplicationData();
   };
 }
 
@@ -4136,10 +4583,14 @@ function closeTaxDeclarationDetail() {
 }
 
 // --- Logic Lấy Dữ Liệu Bán Hàng ---
+// Trả hàng: doanh thu khai thuế phải phản ánh doanh thu THỰC NHẬN sau khi trừ hàng bị trả lại.
+// Đơn hoàn (return_sell) được tính là 1 khoản GIẢM TRỪ doanh thu, ghi nhận vào KỲ XẢY RA TRẢ HÀNG
+// (không lùi về sửa kỳ đã khai của đơn bán gốc — vì kỳ đó có thể đã nộp tờ khai rồi).
+// Trả hàng nhập (return_buy) không liên quan tới doanh thu bán ra nên KHÔNG đưa vào tờ khai này.
 function getFilteredSalesTransactions(reportFrom, reportTo, salesChannel) {
   const txs = state.transactions[state.activePortfolioId] || [];
   return txs.filter(tx => {
-    if (tx.type !== 'sell') return false;
+    if (tx.type !== 'sell' && tx.type !== 'return_sell') return false;
     
     if (reportFrom && reportTo) {
       if (tx.date < reportFrom || tx.date > reportTo) return false;
@@ -4157,10 +4608,13 @@ function getFilteredSalesTransactions(reportFrom, reportTo, salesChannel) {
 function buildS1aExportPayload(taxInfo, decl, txs) {
   const rows = txs.map(tx => {
     let finalPrice = tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null ? tx.taxUnitPrice : tx.unitPrice;
+    const isReturn = tx.type === 'return_sell';
     return {
       date: tx.date,
-      description: `Bán ${tx.qty} xe ${tx.modelName} ${tx.brand}`,
-      amount: Number(finalPrice) * Number(tx.qty)
+      description: isReturn
+        ? `Hoàn trả ${tx.qty} xe ${tx.modelName} ${tx.brand} (giảm trừ doanh thu, đơn gốc #${String(tx.relatedTxId || '').slice(-6)})`
+        : `Bán ${tx.qty} xe ${tx.modelName} ${tx.brand}`,
+      amount: (isReturn ? -1 : 1) * Number(finalPrice) * Number(tx.qty)
     };
   });
   
@@ -4179,11 +4633,14 @@ function buildS1aExportPayload(taxInfo, decl, txs) {
 function buildS2aExportPayload(taxInfo, decl, txs) {
   const rows = txs.map(tx => {
     let finalPrice = tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null ? tx.taxUnitPrice : tx.unitPrice;
+    const isReturn = tx.type === 'return_sell';
     return {
       refId: tx.id || `TX-${Date.now()}-${Math.floor(Math.random()*1000)}`,
       date: tx.date,
-      description: `Bán ${tx.qty} xe ${tx.modelName} ${tx.brand}`,
-      amount: Number(finalPrice) * Number(tx.qty)
+      description: isReturn
+        ? `Hoàn trả ${tx.qty} xe ${tx.modelName} ${tx.brand} (giảm trừ doanh thu, đơn gốc #${String(tx.relatedTxId || '').slice(-6)})`
+        : `Bán ${tx.qty} xe ${tx.modelName} ${tx.brand}`,
+      amount: (isReturn ? -1 : 1) * Number(finalPrice) * Number(tx.qty)
     };
   });
   
@@ -4287,14 +4744,14 @@ function generateTaxPreviewHtml(decl, info, txs) {
   let rowsHtml = '';
   let totalAmt = 0;
   
-  // Gom nhóm giao dịch theo ngày
+  // Gom nhóm giao dịch theo ngày — trả hàng bán (return_sell) tính là khoản ÂM (giảm trừ doanh thu)
   const txsByDate = {};
   txs.forEach(tx => {
     let finalPriceSource = tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null ? tx.taxUnitPrice : tx.unitPrice;
     let priceStr = String(finalPriceSource || '0').replace(/[^0-9.-]+/g, "");
     let price = parseFloat(priceStr) || 0;
     let qty = Number(tx.qty) || 1;
-    let amt = price * qty;
+    let amt = price * qty * (tx.type === 'return_sell' ? -1 : 1);
     
     if (!txsByDate[tx.date]) {
       txsByDate[tx.date] = 0;
@@ -4420,8 +4877,10 @@ async function downloadTaxExcel() {
       let finalPriceSource = tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null ? tx.taxUnitPrice : tx.unitPrice;
       const price = parseFloat(String(finalPriceSource || '0').replace(/[^0-9.-]+/g, '')) || 0;
       const qty = Number(tx.qty) || 1;
+      // Trả hàng bán (return_sell): giảm trừ doanh thu, tính là khoản âm trong kỳ xảy ra trả hàng
+      const amt = price * qty * (tx.type === 'return_sell' ? -1 : 1);
       if (!txsByDate[tx.date]) txsByDate[tx.date] = 0;
-      txsByDate[tx.date] += price * qty;
+      txsByDate[tx.date] += amt;
     });
 
     const rows = Object.keys(txsByDate).sort().map(date => ({
@@ -4834,8 +5293,10 @@ async function downloadTaxZip() {
       let priceStr = String(tx.unitPrice || '0').replace(/[^0-9.-]+/g, "");
       let price = parseFloat(priceStr) || 0;
       let qty = Number(tx.qty) || 1;
+      // Trả hàng bán (return_sell): giảm trừ doanh thu, tính là khoản âm trong kỳ xảy ra trả hàng
+      const amt = price * qty * (tx.type === 'return_sell' ? -1 : 1);
       if (!txsByDate[tx.date]) txsByDate[tx.date] = 0;
-      txsByDate[tx.date] += price * qty;
+      txsByDate[tx.date] += amt;
     });
 
     function base64ToArrayBuffer(base64) {
@@ -5097,7 +5558,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   window.datePickers = {
     buyDate: initDatePicker("buyDateWrapper"),
     sellDate: initDatePicker("sellDateWrapper"),
-    editTxDate: initDatePicker("editTxDateWrapper")
+    editTxDate: initDatePicker("editTxDateWrapper"),
+    returnDate: initDatePicker("returnDateWrapper") // Trả hàng: dùng lại datepicker sẵn có
   };
 
   // Thiết lập mặc định ngày nhập/bán trong Form là ngày hôm nay theo múi giờ địa phương Việt Nam
@@ -5107,6 +5569,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   };
   setLocalToday("buyDate");
   setLocalToday("sellDate");
+  setLocalToday("returnDate");
 
   // 1. Tải dữ liệu (Cloud nếu đã cấu hình, fallback LocalStorage)
   await loadData();
@@ -5116,6 +5579,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   const symbol = state.currency === "VND" ? "vnd" : (state.currency === "USD" ? "$" : "€");
   document.getElementById("buyCurrencyAddon").innerText = symbol;
   document.getElementById("sellCurrencyAddon").innerText = symbol;
+  const returnLossAddonInit = document.getElementById("returnLossCurrencyAddon");
+  if (returnLossAddonInit) returnLossAddonInit.innerText = symbol;
   setupInputFormatting(); // Kích hoạt tự động định dạng khi gõ tiền
 
   // 2. Chạy render giao diện ban đầu
@@ -5128,9 +5593,11 @@ window.addEventListener("DOMContentLoaded", async () => {
   setupPackagingAutocomplete();
   setupSellAutocomplete();
   setupEditTxAutocomplete();
+  setupReturnAutocomplete();     // Trả hàng: autocomplete tìm giao dịch gốc
   initShopeeCalc();
   setupBuyImageUpload();
   setupFormSubmissions();
+  setupReturnFormSubmission();   // Trả hàng: xử lý submit form trả hàng
   setupPortfolioActions();
   setupInteractiveFilters();
   setupCsvExport();

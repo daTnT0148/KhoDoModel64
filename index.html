@@ -239,6 +239,14 @@
                 <span>Tháng này:<strong id="val-profit-month">0 vnd</strong></span>
               </div>
             </div>
+            <div class="kpi-card" id="kpi-return-loss">
+              <div class="kpi-header">
+                <span class="kpi-title">Chi phí trả hàng (Ship/Bao bì)</span>
+                <i data-lucide="rotate-ccw" class="icon-return"></i>
+              </div>
+              <h3 class="kpi-value text-danger" id="val-return-loss">0 vnd</h3>
+              <p class="kpi-subtext" id="sub-return-loss">Đã trừ vào lợi nhuận ròng</p>
+            </div>
           </div>
 
           <!-- Charts Row -->
@@ -658,6 +666,66 @@
               </form>
             </div>
 
+            <!-- RETURN Form (Trả hàng) -->
+            <div class="form-card">
+              <div class="card-header">
+                <h3><i data-lucide="rotate-ccw" class="text-danger"></i> Ghi nhận Trả hàng</h3>
+                <p>Trả hàng nhập (trả lại NCC) hoặc trả hàng bán (khách trả lại xe đã mua).</p>
+              </div>
+              <form id="returnForm" class="styled-form">
+                <div class="form-group">
+                  <label for="returnType">Loại trả hàng <span class="required">*</span></label>
+                  <select id="returnType" required>
+                    <option value="return_buy">Trả hàng nhập (trả lại NCC)</option>
+                    <option value="return_sell">Trả hàng bán (khách trả lại)</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label for="returnTxInput">Chọn giao dịch gốc cần trả <span class="required">*</span></label>
+                  <div class="autocomplete-wrapper">
+                    <input type="text" id="returnTxInput" placeholder="Gõ tên xe, hãng hoặc ngày..." required autocomplete="off">
+                    <input type="hidden" id="returnTxSelect">
+                    <div id="returnTxSuggestions" class="suggestions-list hidden"></div>
+                  </div>
+                  <div class="info-bubble hidden" id="returnTxInfo"></div>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="returnQty">Số lượng trả <span class="required">*</span></label>
+                    <input type="number" id="returnQty" min="1" value="1" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="returnLoss">Khoản lỗ kèm theo (ship, bao bì...)</label>
+                    <div class="currency-input-wrapper">
+                      <input type="text" id="returnLoss" placeholder="0" value="0">
+                      <span class="currency-addon" id="returnLossCurrencyAddon">vnd</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="returnDate">Ngày trả hàng <span class="required">*</span></label>
+                    <div class="datepicker-wrapper" id="returnDateWrapper">
+                      <input type="text" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
+                      <i data-lucide="calendar" class="datepicker-icon"></i>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="form-group">
+                  <label for="returnNotes">Lý do trả hàng (Tùy chọn)</label>
+                  <textarea id="returnNotes" rows="2" placeholder="Ví dụ: Xe bị lỗi sơn, khách đổi ý, hàng không đúng mô tả..."></textarea>
+                </div>
+
+                <button type="submit" class="btn btn-danger btn-block">
+                  <i data-lucide="rotate-ccw"></i> Ghi nhận trả hàng
+                </button>
+              </form>
+            </div>
+
           </div>
 
           <!-- Transaction History Table -->
@@ -673,6 +741,8 @@
                   <option value="all">Tất cả giao dịch</option>
                   <option value="buy">Chỉ giao dịch Mua</option>
                   <option value="sell">Chỉ giao dịch Bán</option>
+                  <option value="return_buy">Chỉ Trả hàng nhập</option>
+                  <option value="return_sell">Chỉ Trả hàng bán</option>
                 </select>
                 <select id="historyFilterChannel">
                   <option value="all">Tất cả kênh</option>
@@ -739,6 +809,7 @@
                     <th>Năm</th>
                     <th>Doanh thu (Bán)</th>
                     <th>Chi phí vốn đã bán (COGS)</th>
+                    <th>Chi phí trả hàng (Ship/Bao bì)</th>
                     <th>Lợi nhuận ròng</th>
                     <th>Số xe mua mới</th>
                     <th>Số xe bán ra</th>
@@ -1067,6 +1138,18 @@
         <div class="form-group">
           <label for="editTxNotes">Ghi chú (Tùy chọn)</label>
           <textarea id="editTxNotes" rows="2" placeholder="Chi tiết giao dịch..."></textarea>
+        </div>
+
+        <!-- Trả hàng: chỉ hiện khi sửa giao dịch return_buy/return_sell -->
+        <div class="form-group hidden" id="editTxReturnInfoGroup">
+          <div class="info-bubble" id="editTxReturnInfo"></div>
+        </div>
+        <div class="form-group hidden" id="editTxReturnLossGroup">
+          <label for="editTxReturnLoss">Khoản lỗ kèm theo (ship, bao bì...)</label>
+          <div class="currency-input-wrapper">
+            <input type="text" id="editTxReturnLoss" placeholder="0">
+            <span class="currency-addon" id="editTxReturnLossCurrencyAddon">vnd</span>
+          </div>
         </div>
 
         <div class="modal-footer">
