@@ -81,7 +81,7 @@ function getSheet(name) {
 function ensureTransactionsColumns(sheet) {
   const lastCol = sheet.getLastColumn();
   const headers = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
-  const required = ["relatedTxId", "returnLoss", "taxUnitPrice"]; // Trả hàng: liên kết + khoản lỗ | Shopee: giá đăng bán/khai thuế
+  const required = ["relatedTxId", "returnLoss", "taxUnitPrice", "restockToInventory"]; // Trả hàng: liên kết + khoản lỗ + có hoàn kho không | Shopee: giá đăng bán/khai thuế
   let changed = false;
   required.forEach(col => {
     if (headers.indexOf(col) === -1) {
@@ -102,7 +102,7 @@ function createSheet(ss, name) {
     Portfolios:   ["portfolioId", "portfolioName"],
     Transactions: ["id", "portfolioId", "type", "modelName", "brand", "qty",
                    "unitCost", "unitPrice", "channel", "notes", "date", "color", "packaging", "sku",
-                   "relatedTxId", "returnLoss", "taxUnitPrice"], // Trả hàng: liên kết + lỗ | Shopee: giá đăng bán/khai thuế
+                   "relatedTxId", "returnLoss", "taxUnitPrice", "restockToInventory"], // Trả hàng: liên kết + lỗ + hoàn kho | Shopee: giá đăng bán/khai thuế
     Settings:     ["key", "value"]
   };
   if (headers[name]) {
@@ -161,6 +161,10 @@ function getAllData() {
     if (r.returnLoss !== undefined && r.returnLoss !== "" && r.returnLoss !== null) tx.returnLoss = Number(r.returnLoss);
     // Shopee: giá đăng bán/doanh thu khai báo, chỉ gắn khi có giá trị (áp dụng cho kênh Shopee)
     if (r.taxUnitPrice !== undefined && r.taxUnitPrice !== "" && r.taxUnitPrice !== null) tx.taxUnitPrice = Number(r.taxUnitPrice);
+    // Trả hàng: restockToInventory mặc định Có (true) nếu ô trống — chỉ gắn false khi Sheet ghi rõ là false/FALSE/"no"
+    if (r.restockToInventory === false || r.restockToInventory === "FALSE" || r.restockToInventory === "false" || r.restockToInventory === "no") {
+      tx.restockToInventory = false;
+    }
     transactions[pid].push(tx);
   });
 
@@ -200,7 +204,8 @@ function saveTransaction(tx) {
     tx.color || "", tx.packaging || "", tx.sku || "",
     tx.relatedTxId || "", // Trả hàng: liên kết giao dịch gốc
     (tx.type === "return_buy" || tx.type === "return_sell") ? Number(tx.returnLoss || 0) : "",
-    (tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null) ? Number(tx.taxUnitPrice) : "" // Shopee: giá đăng bán/khai thuế
+    (tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null) ? Number(tx.taxUnitPrice) : "", // Shopee: giá đăng bán/khai thuế
+    (tx.type === "return_buy" || tx.type === "return_sell") ? (tx.restockToInventory !== false) : "" // Trả hàng: có hoàn kho không
   ]);
   return { ok: true };
 }
@@ -210,7 +215,7 @@ function updateTransaction(tx) {
   const data  = sheet.getDataRange().getValues();
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][0]) === String(tx.id)) {
-      sheet.getRange(i + 1, 1, 1, 17).setValues([[
+      sheet.getRange(i + 1, 1, 1, 18).setValues([[
         tx.id, tx.portfolioId, tx.type, tx.modelName, tx.brand,
         tx.qty,
         (tx.type === "buy" || tx.type === "return_buy") ? tx.unitCost : "",
@@ -219,7 +224,8 @@ function updateTransaction(tx) {
         tx.color || "", tx.packaging || "", tx.sku || "",
         tx.relatedTxId || "",
         (tx.type === "return_buy" || tx.type === "return_sell") ? Number(tx.returnLoss || 0) : "",
-        (tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null) ? Number(tx.taxUnitPrice) : ""
+        (tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null) ? Number(tx.taxUnitPrice) : "",
+        (tx.type === "return_buy" || tx.type === "return_sell") ? (tx.restockToInventory !== false) : ""
       ]]);
       return { ok: true };
     }
@@ -319,7 +325,8 @@ function replaceTransactions(data) {
       tx.color || "", tx.packaging || "", tx.sku || "",
       tx.relatedTxId || "",
       (tx.type === "return_buy" || tx.type === "return_sell") ? Number(tx.returnLoss || 0) : "",
-      (tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null) ? Number(tx.taxUnitPrice) : ""
+      (tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null) ? Number(tx.taxUnitPrice) : "",
+      (tx.type === "return_buy" || tx.type === "return_sell") ? (tx.restockToInventory !== false) : ""
     ]);
   });
   sheet.clear();

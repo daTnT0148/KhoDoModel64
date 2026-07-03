@@ -380,26 +380,39 @@ function loadStateFromLocalStorage() {
 // --- TRẢ HÀNG: Các hàm dùng chung để tính số lượng đã trả / còn có thể trả ---
 // Type mới: "return_buy" (trả hàng nhập lại NCC) và "return_sell" (khách trả hàng đã bán).
 // Cả 2 type đều có trường relatedTxId trỏ tới giao dịch "buy"/"sell" gốc bị trả.
-// Thay vì tạo thêm nhánh xử lý riêng trong FIFO, ta coi trả hàng như một khoản GIẢM TRỪ
-// số lượng hiệu lực (effective qty) của chính giao dịch gốc đó — cách này tái sử dụng
-// nguyên vẹn logic FIFO sẵn có (calculateInventory / calculateYearlyStats) mà không cần viết lại.
+// Mỗi giao dịch trả hàng có thêm trường restockToInventory (mặc định true nếu không set):
+//   - true (Có, mặc định): hàng THỰC SỰ rời khỏi/quay lại kho — ảnh hưởng số lượng tồn kho.
+//   - false (Không): chỉ là điều chỉnh tiền (hoàn tiền / giảm doanh thu), hàng KHÔNG rời/về kho
+//     vật lý — ví dụ hàng lỗi không thể bán lại (return_sell) hoặc NCC bù tiền nhưng không nhận
+//     lại hàng (return_buy). Ta tách riêng 2 map: "restock" (ảnh hưởng kho) và "noRestock"
+//     (chỉ ảnh hưởng tiền) để FIFO tính đúng cả tồn kho lẫn tài chính.
 
-// Gom tổng số lượng đã trả cho từng giao dịch gốc: { [relatedTxId]: tổngQtyĐãTrả }
+// Gom tổng số lượng đã trả cho từng giao dịch gốc, tách theo restockToInventory
+// Trả về { restock: {id: qty}, noRestock: {id: qty}, total: {id: qty} }
 function computeReturnedQtyMap(txs) {
-  const map = {};
+  const restock = {};
+  const noRestock = {};
+  const total = {};
   txs.forEach(t => {
     if ((t.type === "return_buy" || t.type === "return_sell") && t.relatedTxId) {
-      map[t.relatedTxId] = (map[t.relatedTxId] || 0) + Number(t.qty || 0);
+      const qty = Number(t.qty || 0);
+      const isRestock = t.restockToInventory !== false; // mặc định Có nếu chưa từng set (dữ liệu cũ)
+      total[t.relatedTxId] = (total[t.relatedTxId] || 0) + qty;
+      if (isRestock) {
+        restock[t.relatedTxId] = (restock[t.relatedTxId] || 0) + qty;
+      } else {
+        noRestock[t.relatedTxId] = (noRestock[t.relatedTxId] || 0) + qty;
+      }
     }
   });
-  return map;
+  return { restock, noRestock, total };
 }
 
-// Số lượng còn có thể trả của 1 giao dịch buy/sell gốc = qty gốc - tổng đã trả trước đó
+// Số lượng còn có thể trả của 1 giao dịch buy/sell gốc = qty gốc - tổng đã trả trước đó (không phân biệt hoàn kho hay không)
 function getReturnableQty(portfolioId, tx) {
   const txs = state.transactions[portfolioId] || [];
   const returnedMap = computeReturnedQtyMap(txs);
-  const already = returnedMap[tx.id] || 0;
+  const already = returnedMap.total[tx.id] || 0;
   return Math.max(0, Number(tx.qty) - already);
 }
 
@@ -410,13 +423,13 @@ function getReturnableTransactions(portfolioId, sourceType) {
   const returnedMap = computeReturnedQtyMap(txs);
   return txs
     .filter(tx => tx.type === sourceType)
-    .map(tx => ({ ...tx, returnableQty: Math.max(0, Number(tx.qty) - (returnedMap[tx.id] || 0)) }))
+    .map(tx => ({ ...tx, returnableQty: Math.max(0, Number(tx.qty) - (returnedMap.total[tx.id] || 0)) }))
     .filter(tx => tx.returnableQty > 0);
 }
 
 function calculateInventory(portfolioId) {
   const txs = state.transactions[portfolioId] || [];
-  // Số lượng đã trả cho từng giao dịch gốc, dùng để trừ vào effective qty bên dưới
+  // Số lượng đã trả cho từng giao dịch gốc, tách theo có hoàn lại kho hay không
   const returnedMap = computeReturnedQtyMap(txs);
   const inventoryMap = {};
 
@@ -434,6 +447,7 @@ function calculateInventory(portfolioId) {
         sells: [],      // { qty, unitPrice, date }
         totalRevenue: 0,
         totalReturnLoss: 0, // Trả hàng: tổng khoản lỗ kèm theo (ship, bao bì hỏng...) khi trả hàng
+        totalReturnBuyCostCredit: 0, // Trả hàng nhập KHÔNG hoàn kho: vẫn được hoàn tiền dù hàng không rời kho
         transactions: []
       };
     }
@@ -441,29 +455,38 @@ function calculateInventory(portfolioId) {
     inventoryMap[key].transactions.push(tx);
 
     if (tx.type === "buy") {
-      // Trả hàng nhập (return_buy) làm giảm số lượng lô này — trừ theo FIFO tự nhiên vì
-      // lô vẫn giữ nguyên vị trí ngày mua, chỉ giảm qty và do đó giảm totalBuyCost tương ứng.
-      const effectiveQty = Math.max(0, Number(tx.qty) - (returnedMap[tx.id] || 0));
+      // Trả hàng nhập (return_buy) CÓ hoàn kho: hàng thực sự rời kho → trừ khỏi lô này.
+      // Trả hàng nhập KHÔNG hoàn kho: hàng vẫn nằm trong kho, chỉ hoàn tiền (totalReturnBuyCostCredit)
+      // chứ không trừ qty của lô — nếu không sẽ làm tồn kho bị âm sai so với thực tế.
+      const restockReturned = returnedMap.restock[tx.id] || 0;
+      const noRestockReturned = returnedMap.noRestock[tx.id] || 0;
+      const effectiveQty = Math.max(0, Number(tx.qty) - restockReturned);
       inventoryMap[key].buyLots.push({
         qty:      effectiveQty,
         unitCost: Number(tx.unitCost),
         date:     tx.date
       });
+      inventoryMap[key].totalReturnBuyCostCredit += noRestockReturned * Number(tx.unitCost);
     } else if (tx.type === "sell") {
-      // Trả hàng bán (return_sell) làm giảm số lượng đã bán hiệu lực — hàng "quay lại" tồn kho
-      // một cách tự nhiên vì FIFO sẽ tiêu thụ ít lô mua hơn, đồng thời giảm totalRevenue.
-      const effectiveQty = Math.max(0, Number(tx.qty) - (returnedMap[tx.id] || 0));
+      // Trả hàng bán (return_sell) CÓ hoàn kho: hàng quay lại kho → giảm số lượng FIFO tiêu thụ
+      // (để hàng "hiện diện" lại trong tồn kho) — đồng thời giảm doanh thu.
+      // Trả hàng bán KHÔNG hoàn kho (hàng lỗi/không thể bán lại): vẫn giảm doanh thu như bình
+      // thường, NHƯNG không được cộng lại vào tồn kho — nên vẫn tính là đã tiêu thụ trong FIFO.
+      const restockReturned = returnedMap.restock[tx.id] || 0;
+      const noRestockReturned = returnedMap.noRestock[tx.id] || 0;
+      const fifoQty    = Math.max(0, Number(tx.qty) - restockReturned); // ảnh hưởng tồn kho & COGS
+      const revenueQty = Math.max(0, Number(tx.qty) - restockReturned - noRestockReturned); // ảnh hưởng doanh thu
       inventoryMap[key].sells.push({
-        qty:       effectiveQty,
+        qty:       fifoQty,
         unitPrice: Number(tx.unitPrice),
         date:      tx.date
       });
-      inventoryMap[key].totalRevenue += effectiveQty * Number(tx.unitPrice);
+      inventoryMap[key].totalRevenue += revenueQty * Number(tx.unitPrice);
     }
     // return_buy / return_sell: không tự đẩy vào buyLots/sells — tác dụng của chúng đã được
-    // gộp vào effectiveQty của giao dịch buy/sell gốc ở trên (qua returnedMap).
+    // gộp vào effectiveQty/revenueQty của giao dịch buy/sell gốc ở trên (qua returnedMap).
     // Khoản lỗ kèm theo (tiền ship trả hàng, bao bì hỏng...) luôn làm giảm lợi nhuận,
-    // dù là trả hàng nhập hay trả hàng bán.
+    // dù là trả hàng nhập hay trả hàng bán, dù có hoàn kho hay không.
     if (tx.type === "return_buy" || tx.type === "return_sell") {
       inventoryMap[key].totalReturnLoss += Number(tx.returnLoss || 0);
     }
@@ -539,7 +562,8 @@ function calculateInventory(portfolioId) {
       : 0;
 
     // Tổng chi phí mua (dùng để hiển thị "Tổng chi phí" trong bảng)
-    const totalBuyCost = lots.reduce((s, l) => s + l.qty * l.unitCost, 0);
+    // Trừ thêm khoản đã hoàn tiền từ NCC mà KHÔNG hoàn hàng về kho (vẫn được ghi nhận là tiền đã lấy lại)
+    const totalBuyCost = lots.reduce((s, l) => s + l.qty * l.unitCost, 0) - (item.totalReturnBuyCostCredit || 0);
 
     let oldestStockDate = null;
     const remainingLots = lots.filter(l => l.remaining > 0);
@@ -619,9 +643,9 @@ function calculateKPIs(inventory, portfolioId) {
  */
 function calculateYearlyStats(portfolioId, inventoryList) {
   const txs = state.transactions[portfolioId] || [];
-  // Trả hàng: dùng effective qty (qty gốc - qty đã trả) giống hệt cách tính ở calculateInventory,
-  // để số liệu theo năm cũng phản ánh đúng trả hàng nhập/bán. Khoản trả được gán vào NĂM của
-  // giao dịch gốc (không phải năm trả hàng) — vì bản chất đây là điều chỉnh giảm cho giao dịch đó.
+  // Trả hàng: tách riêng phần "hoàn kho" (ảnh hưởng tồn kho/COGS) và "không hoàn kho" (chỉ ảnh
+  // hưởng tiền) giống hệt cách tính ở calculateInventory. Khoản trả được gán vào NĂM của giao dịch
+  // gốc (không phải năm trả hàng) — vì bản chất đây là điều chỉnh giảm cho giao dịch đó.
   const returnedMap = computeReturnedQtyMap(txs);
 
   // Gom nhóm theo xe, chạy FIFO để gán fifoUnitCost cho từng giao dịch bán
@@ -629,8 +653,15 @@ function calculateYearlyStats(portfolioId, inventoryList) {
   txs.forEach(tx => {
     const key = `${tx.modelName.trim().toLowerCase()}||${tx.brand.trim().toLowerCase()}||${(tx.color || "").trim().toLowerCase()}||${(tx.packaging || "").trim().toLowerCase()}`;
     if (!carMap[key]) carMap[key] = { buys: [], sells: [] };
-    if (tx.type === "buy")  carMap[key].buys.push({ ...tx, qty: Math.max(0, Number(tx.qty) - (returnedMap[tx.id] || 0)), unitCost: Number(tx.unitCost) });
-    if (tx.type === "sell") carMap[key].sells.push({ ...tx, qty: Math.max(0, Number(tx.qty) - (returnedMap[tx.id] || 0)), unitPrice: Number(tx.unitPrice) });
+    if (tx.type === "buy") {
+      const restockReturned = returnedMap.restock[tx.id] || 0;
+      carMap[key].buys.push({ ...tx, qty: Math.max(0, Number(tx.qty) - restockReturned), unitCost: Number(tx.unitCost) });
+    }
+    if (tx.type === "sell") {
+      const restockReturned = returnedMap.restock[tx.id] || 0;
+      // fifoQty: số lượng thực tế được FIFO tiêu thụ khỏi kho (KHÔNG hoàn kho vẫn tính là đã tiêu thụ)
+      carMap[key].sells.push({ ...tx, qty: Math.max(0, Number(tx.qty) - restockReturned), unitPrice: Number(tx.unitPrice) });
+    }
   });
 
   // Map txId -> fifoUnitCost để tra khi duyệt yearly
@@ -678,19 +709,25 @@ function calculateYearlyStats(portfolioId, inventoryList) {
     }
 
     if (tx.type === "buy") {
-      const effQty = Math.max(0, Number(tx.qty) - (returnedMap[tx.id] || 0)); // trừ trả hàng nhập
-      yearlyData[year].purchaseCost += effQty * Number(tx.unitCost);
-      yearlyData[year].buyQty += effQty;
+      const restockReturned = returnedMap.restock[tx.id] || 0;
+      const noRestockReturned = returnedMap.noRestock[tx.id] || 0;
+      const fifoQty = Math.max(0, Number(tx.qty) - restockReturned); // ảnh hưởng tồn kho thực tế
+      const costCredit = noRestockReturned * Number(tx.unitCost); // hoàn tiền dù hàng không rời kho
+      yearlyData[year].purchaseCost += fifoQty * Number(tx.unitCost) - costCredit;
+      yearlyData[year].buyQty += fifoQty;
     } else if (tx.type === "sell") {
-      const effQty           = Math.max(0, Number(tx.qty) - (returnedMap[tx.id] || 0)); // trừ trả hàng bán
-      const rev               = effQty * Number(tx.unitPrice);
+      const restockReturned = returnedMap.restock[tx.id] || 0;
+      const noRestockReturned = returnedMap.noRestock[tx.id] || 0;
+      const fifoQty    = Math.max(0, Number(tx.qty) - restockReturned); // số lượng thực tế tiêu thụ khỏi kho (dùng tính COGS)
+      const revenueQty = Math.max(0, Number(tx.qty) - restockReturned - noRestockReturned); // số lượng dùng tính doanh thu
+      const rev               = revenueQty * Number(tx.unitPrice);
       const fifoUnitCost      = fifoSellCostMap[tx.id] || 0;
-      const costOfThisSell    = effQty * fifoUnitCost;
+      const costOfThisSell    = fifoQty * fifoUnitCost;
 
       yearlyData[year].revenue  += rev;
       yearlyData[year].cogs     += costOfThisSell;
       yearlyData[year].profit   += (rev - costOfThisSell);
-      yearlyData[year].sellQty  += effQty;
+      yearlyData[year].sellQty  += fifoQty;
     }
     // return_buy / return_sell: không cộng doanh thu/chi phí riêng (đã gộp vào effQty của giao
     // dịch gốc ở trên) — nhưng khoản lỗ kèm theo (ship, bao bì hỏng...) là 1 chi phí thực tế phát
@@ -1118,9 +1155,9 @@ function renderInventoryTable(inventory) {
 
         const notesText = tx.notes ? `<span class="details-tx-notes">(${tx.notes})</span>` : "";
         const channelText = (tx.type === "sell" || isReturnSell) && tx.channel ? `<span class="badge badge-in-stock" style="font-size:9px;margin-right:8px;">${tx.channel}</span>` : "";
-        // Trả hàng: hiển thị thêm khoản lỗ kèm theo (ship, bao bì...) nếu có, và liên kết giao dịch gốc
+        // Trả hàng: hiển thị thêm khoản lỗ kèm theo (ship, bao bì...), trạng thái hoàn kho, và liên kết giao dịch gốc
         const returnExtra = (isReturnBuy || isReturnSell)
-          ? `<span class="details-tx-notes">(Liên kết #${String(tx.relatedTxId || "").slice(-6)}${Number(tx.returnLoss || 0) > 0 ? `, lỗ kèm theo: -${formatCurrency(Number(tx.returnLoss))}` : ''})</span>`
+          ? `<span class="details-tx-notes">(Liên kết #${String(tx.relatedTxId || "").slice(-6)}${Number(tx.returnLoss || 0) > 0 ? `, lỗ kèm theo: -${formatCurrency(Number(tx.returnLoss))}` : ''}${tx.restockToInventory === false ? ', ⛔ không hoàn kho' : ''})</span>`
           : "";
         txItemsHtml += `
           <div class="details-tx-item">
@@ -1354,12 +1391,16 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
       const lossText = Number(tx.returnLoss || 0) > 0
         ? `<span style="font-size:11px;color:var(--danger);">Lỗ kèm theo: -${formatCurrency(Number(tx.returnLoss))}</span>`
         : '';
+      const restockText = tx.restockToInventory === false
+        ? `<span style="font-size:11px;color:var(--danger);">⛔ Không hoàn kho</span>`
+        : '';
       detailHtml = `
         <div style="display:flex; flex-direction:column;">
           <span class="badge badge-return" style="align-self:flex-start; margin-bottom:2px;">
             <i data-lucide="rotate-ccw" style="width:10px;height:10px;"></i> Trả NCC · ${relatedShort}
           </span>
           ${lossText}
+          ${restockText}
           ${tx.notes ? `<span style="font-size:11px;color:var(--text-muted);">${tx.notes}</span>` : ''}
         </div>
       `;
@@ -1368,12 +1409,16 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
       const lossText = Number(tx.returnLoss || 0) > 0
         ? `<span style="font-size:11px;color:var(--danger);">Lỗ kèm theo: -${formatCurrency(Number(tx.returnLoss))}</span>`
         : '';
+      const restockText = tx.restockToInventory === false
+        ? `<span style="font-size:11px;color:var(--danger);">⛔ Không hoàn kho</span>`
+        : '';
       detailHtml = `
         <div style="display:flex; flex-direction:column;">
           <span class="badge badge-return" style="align-self:flex-start; margin-bottom:2px;">
             <i data-lucide="rotate-ccw" style="width:10px;height:10px;"></i> Khách trả (${tx.channel || '—'}) · ${relatedShort}
           </span>
           ${lossText}
+          ${restockText}
           ${tx.notes ? `<span style="font-size:11px;color:var(--text-muted);">${tx.notes}</span>` : ''}
         </div>
       `;
@@ -2674,6 +2719,7 @@ function setupReturnFormSubmission() {
     const relatedTxId = document.getElementById("returnTxSelect").value;
     const qty = Number(document.getElementById("returnQty").value);
     const returnLoss = getNumericValue(document.getElementById("returnLoss").value) || 0; // Khoản lỗ kèm theo (ship, bao bì...)
+    const restockToInventory = document.getElementById("returnRestock").value !== "no"; // Mặc định Có
     const date = window.datePickers.returnDate.getValue();
     const notes = document.getElementById("returnNotes").value.trim();
 
@@ -2710,6 +2756,7 @@ function setupReturnFormSubmission() {
       sku: originalTx.sku || generateSKU(originalTx.brand, originalTx.modelName, originalTx.color, originalTx.packaging),
       qty,
       returnLoss, // Khoản lỗ kèm theo (ship, bao bì hỏng...) — luôn làm giảm lợi nhuận dù trả nhập hay trả bán
+      restockToInventory, // true = hàng thực sự hoàn về/rời kho | false = chỉ điều chỉnh tiền, không đụng tồn kho
       date,
       notes
     };
@@ -2732,6 +2779,7 @@ function setupReturnFormSubmission() {
     returnForm.reset();
     document.getElementById("returnTxSelect").value = "";
     document.getElementById("returnLoss").value = "0";
+    document.getElementById("returnRestock").value = "yes";
     const infoBubble = document.getElementById("returnTxInfo");
     if (infoBubble) infoBubble.classList.add("hidden");
     window.datePickers.returnDate.setValue(dateToISO(new Date()));
@@ -2864,7 +2912,7 @@ function setupCsvExport() {
 
     // Tạo tiêu đề file CSV (Bản mã UTF-8 với BOM để Excel đọc được dấu tiếng Việt)
     let csvContent = "\uFEFF";
-    csvContent += "ID Giao Dịch,Loại Giao Dịch,Tên Xe,Hãng Sản Xuất,Màu Sắc,Đóng Gói,Số Lượng,Đơn Giá,Ngày Giao Dịch,Kênh Bán Hàng,Ghi Chú,Giao Dịch Gốc Liên Kết,Khoản Lỗ Trả Hàng\n";
+    csvContent += "ID Giao Dịch,Loại Giao Dịch,Tên Xe,Hãng Sản Xuất,Màu Sắc,Đóng Gói,Số Lượng,Đơn Giá,Ngày Giao Dịch,Kênh Bán Hàng,Ghi Chú,Giao Dịch Gốc Liên Kết,Khoản Lỗ Trả Hàng,Hoàn Lại Kho\n";
 
     const typeLabels = { buy: "Mua", sell: "Bán", return_buy: "Hoàn (Trả NCC)", return_sell: "Hoàn (Khách trả)" };
 
@@ -2879,8 +2927,9 @@ function setupCsvExport() {
       const pkgClean = t.packaging ? t.packaging.replace(/"/g, '""') : "";
       const relatedTxClean = t.relatedTxId || "";
       const returnLossClean = (t.type === "return_buy" || t.type === "return_sell") ? Number(t.returnLoss || 0) : "";
+      const restockClean = (t.type === "return_buy" || t.type === "return_sell") ? (t.restockToInventory !== false ? "Có" : "Không") : "";
 
-      csvContent += `"${t.id}","${typeLabel}","${t.modelName.replace(/"/g, '""')}","${t.brand.replace(/"/g, '""')}","${colorClean}","${pkgClean}","${t.qty}","${priceVal}","${t.date}","${channelLabel}","${noteClean}","${relatedTxClean}","${returnLossClean}"\n`;
+      csvContent += `"${t.id}","${typeLabel}","${t.modelName.replace(/"/g, '""')}","${t.brand.replace(/"/g, '""')}","${colorClean}","${pkgClean}","${t.qty}","${priceVal}","${t.date}","${channelLabel}","${noteClean}","${relatedTxClean}","${returnLossClean}","${restockClean}"\n`;
     });
 
     // Tạo đường dẫn tải xuống
@@ -2934,10 +2983,26 @@ function setupCsvImport() {
           // Hàm làm sạch dấu ngoặc kép bọc ngoài
           const clean = str => str ? str.replace(/^"|"$/g, '').trim() : "";
 
-          let id, typeLabel, modelName, brand, color = "", packaging = "", qty, price, date, channel = "Facebook", notes = "", relatedTxId = "", returnLossRaw = "";
+          let id, typeLabel, modelName, brand, color = "", packaging = "", qty, price, date, channel = "Facebook", notes = "", relatedTxId = "", returnLossRaw = "", restockRaw = "";
 
-          if (columns.length >= 13) {
-            // Định dạng mới nhất (13 cột — có hỗ trợ Trả hàng)
+          if (columns.length >= 14) {
+            // Định dạng mới nhất (14 cột — có hỗ trợ Trả hàng + Hoàn lại kho)
+            id = clean(columns[0]) || generateUniqueId("tx");
+            typeLabel = clean(columns[1]).toLowerCase();
+            modelName = clean(columns[2]);
+            brand = clean(columns[3]);
+            color = clean(columns[4]);
+            packaging = clean(columns[5]);
+            qty = Number(clean(columns[6]));
+            price = Number(clean(columns[7]));
+            date = clean(columns[8]);
+            channel = clean(columns[9]) || "Facebook";
+            notes = clean(columns[10]) || "";
+            relatedTxId = clean(columns[11]) || "";
+            returnLossRaw = clean(columns[12]) || "";
+            restockRaw = clean(columns[13]) || "";
+          } else if (columns.length >= 13) {
+            // Định dạng cũ hơn (13 cột — có Trả hàng nhưng chưa có Hoàn lại kho, mặc định Có)
             id = clean(columns[0]) || generateUniqueId("tx");
             typeLabel = clean(columns[1]).toLowerCase();
             modelName = clean(columns[2]);
@@ -3004,6 +3069,10 @@ function setupCsvImport() {
             continue;
           }
 
+          // Hoàn lại kho: mặc định Có nếu cột trống/không hợp lệ, chỉ false khi ghi rõ "không"/"no"/"false"
+          const restockLower = restockRaw.toLowerCase();
+          const restockToInventory = !(restockLower === "không" || restockLower === "no" || restockLower === "false");
+
           const tx = {
             id: id.startsWith("tx-") ? id : generateUniqueId("tx"),
             type,
@@ -3025,11 +3094,13 @@ function setupCsvImport() {
             tx.relatedTxId = relatedTxId;
             tx.unitCost = price;
             tx.returnLoss = Number(returnLossRaw) || 0;
+            tx.restockToInventory = restockToInventory;
           } else if (type === "return_sell") {
             tx.relatedTxId = relatedTxId;
             tx.unitPrice = price;
             tx.channel = ["Facebook", "Shopee", "Trực tiếp"].includes(channel) ? channel : "Trực tiếp";
             tx.returnLoss = Number(returnLossRaw) || 0;
+            tx.restockToInventory = restockToInventory;
           }
 
           newTxs.push(tx);
@@ -3739,10 +3810,12 @@ function openEditTxModal(txId) {
   const returnInfoBox = document.getElementById("editTxReturnInfo");
   const returnLossGroup = document.getElementById("editTxReturnLossGroup");
   const returnLossInput = document.getElementById("editTxReturnLoss");
+  const returnRestockGroup = document.getElementById("editTxReturnRestockGroup");
+  const returnRestockSelect = document.getElementById("editTxReturnRestock");
 
   if (isReturn) {
     // Trả hàng: khóa các trường mẫu xe / giá / kênh vì chúng phải khớp với giao dịch gốc để
-    // FIFO (computeReturnedQtyMap) tính đúng — chỉ cho sửa Số lượng, Ngày, Ghi chú, Khoản lỗ.
+    // FIFO (computeReturnedQtyMap) tính đúng — chỉ cho sửa Số lượng, Ngày, Ghi chú, Khoản lỗ, Hoàn kho.
     modelNameInput.readOnly = true;
     brandInput.readOnly = true;
     colorInput.readOnly = true;
@@ -3762,6 +3835,8 @@ function openEditTxModal(txId) {
     returnInfoGroup.classList.remove("hidden");
     returnLossGroup.classList.remove("hidden");
     returnLossInput.value = formatNumberInput(String(Number(tx.returnLoss || 0)));
+    returnRestockGroup.classList.remove("hidden");
+    returnRestockSelect.value = tx.restockToInventory === false ? "no" : "yes"; // mặc định Có nếu chưa từng set
   } else {
     modelNameInput.readOnly = false;
     brandInput.readOnly = false;
@@ -3770,6 +3845,7 @@ function openEditTxModal(txId) {
     priceInput.readOnly = false;
     returnInfoGroup.classList.add("hidden");
     returnLossGroup.classList.add("hidden");
+    returnRestockGroup.classList.add("hidden");
   }
 
   if (!isReturn && tx.type === "sell") {
@@ -3875,11 +3951,13 @@ function setupEditTxModalHandlers() {
       }
 
       const returnLoss = getNumericValue(document.getElementById("editTxReturnLoss").value) || 0;
+      const restockToInventory = document.getElementById("editTxReturnRestock").value !== "no";
 
       txs[txIndex].date = date;
       txs[txIndex].qty = qty;
       txs[txIndex].notes = notes;
       txs[txIndex].returnLoss = returnLoss;
+      txs[txIndex].restockToInventory = restockToInventory;
 
       dbUpdateTransaction(txs[txIndex]);
       closeEditTxModal();

@@ -713,6 +713,13 @@
                       <i data-lucide="calendar" class="datepicker-icon"></i>
                     </div>
                   </div>
+                  <div class="form-group">
+                    <label for="returnRestock">Hoàn lại kho? <span class="required">*</span></label>
+                    <select id="returnRestock" required>
+                      <option value="yes" selected>Có (hàng về lại kho)</option>
+                      <option value="no">Không (hàng không về kho)</option>
+                    </select>
+                  </div>
                 </div>
 
                 <div class="form-group">
@@ -1150,6 +1157,13 @@
             <input type="text" id="editTxReturnLoss" placeholder="0">
             <span class="currency-addon" id="editTxReturnLossCurrencyAddon">vnd</span>
           </div>
+        </div>
+        <div class="form-group hidden" id="editTxReturnRestockGroup">
+          <label for="editTxReturnRestock">Hoàn lại kho?</label>
+          <select id="editTxReturnRestock">
+            <option value="yes">Có (hàng về lại kho)</option>
+            <option value="no">Không (hàng không về kho)</option>
+          </select>
         </div>
 
         <div class="modal-footer">
