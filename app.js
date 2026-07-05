@@ -1719,19 +1719,25 @@ function getKnownBrands() {
 // --- VẼ BIỂU ĐỒ BẰNG CHART.JS (VISUALIZATIONS) ---
 
 // Vẽ/Cập nhật biểu đồ cột Doanh thu & Chi phí theo Năm (Đã chuyển thành Widget Doanh thu tổng năm nay)
-function drawYoYChart(chartId, yearlyStats) {
+// Cập nhật con số "Doanh thu tổng năm nay" ở Dashboard (không phải biểu đồ — chỉ 1 con số lớn)
+function updateYearlyRevenueKPI() {
   const currentYear = new Date().getFullYear().toString();
   const txs = state.transactions[state.activePortfolioId] || [];
   
   let totalRevenueThisYear = 0;
   
   txs.forEach(tx => {
-    if (tx.type === "sell" && tx.date && tx.date.startsWith(currentYear)) {
+    if (tx.date && tx.date.startsWith(currentYear)) {
       // Ưu tiên Giá đăng bán Shopee (taxUnitPrice), nếu không có thì lấy Lợi nhuận (unitPrice)
       let finalPriceSource = tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null ? tx.taxUnitPrice : tx.unitPrice;
       const price = parseFloat(String(finalPriceSource || '0').replace(/[^0-9.-]+/g, '')) || 0;
       const qty = Number(tx.qty) || 1;
-      totalRevenueThisYear += price * qty;
+      if (tx.type === "sell") {
+        totalRevenueThisYear += price * qty;
+      } else if (tx.type === "return_sell") {
+        // Trả hàng bán: giảm trừ doanh thu của năm xảy ra trả hàng
+        totalRevenueThisYear -= price * qty;
+      }
     }
   });
 
@@ -1739,6 +1745,80 @@ function drawYoYChart(chartId, yearlyStats) {
   if (valEl) {
     valEl.innerText = formatCurrency(totalRevenueThisYear);
   }
+}
+
+// Biểu đồ cột "So sánh tài chính qua các năm" ở tab Báo cáo năm — Doanh thu / COGS / Lợi nhuận ròng
+function drawYoYReportChart(yearlyStats) {
+  const canvas = document.getElementById("yoyReportChart");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  if (charts.yoyReportChart) charts.yoyReportChart.destroy();
+
+  const hasData = yearlyStats.length > 0;
+  const labels = hasData ? yearlyStats.map(s => s.year) : ["Chưa có dữ liệu"];
+  const revenueData = hasData ? yearlyStats.map(s => s.revenue) : [0];
+  const cogsData = hasData ? yearlyStats.map(s => s.cogs) : [0];
+  const profitData = hasData ? yearlyStats.map(s => s.profit) : [0];
+
+  charts.yoyReportChart = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: "Doanh thu",
+          data: revenueData,
+          backgroundColor: "rgba(16, 185, 129, 0.7)",
+          borderRadius: 4
+        },
+        {
+          label: "Chi phí vốn (COGS)",
+          data: cogsData,
+          backgroundColor: "rgba(249, 115, 22, 0.7)",
+          borderRadius: 4
+        },
+        {
+          label: "Lợi nhuận ròng",
+          data: profitData,
+          backgroundColor: "rgba(99, 102, 241, 0.7)",
+          borderRadius: 4
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: "top",
+          labels: { color: "#9ca3af", font: { family: "Outfit" } }
+        },
+        tooltip: {
+          titleFont: { family: "Outfit" },
+          bodyFont: { family: "Outfit" },
+          callbacks: {
+            label: function(context) {
+              return " " + context.dataset.label + ": " + formatCurrency(context.raw);
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { color: "#9ca3af", font: { family: "Outfit" } }
+        },
+        y: {
+          grid: { color: "rgba(255, 255, 255, 0.05)" },
+          ticks: {
+            color: "#9ca3af",
+            font: { family: "Outfit" },
+            callback: function(value) { return formatCurrency(value); }
+          }
+        }
+      }
+    }
+  });
 }
 
 // Biểu đồ tròn cơ cấu kênh bán hàng
@@ -2084,6 +2164,57 @@ function renderModelSuggestions(suggestionsBox, val, onSelect) {
   suggestionsBox.classList.remove("hidden");
 }
 
+// Điều hướng bằng bàn phím (↑ ↓ Enter Esc) cho MỌI ô gợi ý autocomplete trong app — dùng chung.
+// Chỉ tính các item thực sự chọn được (bỏ qua dòng "Không tìm thấy..." có class suggestion-item-empty).
+function enableSuggestionKeyboardNav(inputEl, suggestionsBoxEl) {
+  let activeIndex = -1;
+
+  function getItems() {
+    return Array.from(suggestionsBoxEl.querySelectorAll(".suggestion-item:not(.suggestion-item-empty)"));
+  }
+
+  function highlight(items) {
+    items.forEach((el, i) => el.classList.toggle("active", i === activeIndex));
+    if (activeIndex >= 0 && items[activeIndex]) {
+      items[activeIndex].scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  function selectItem(el) {
+    // Kích hoạt cả 2 loại sự kiện vì các nơi gợi ý khác nhau dùng "mousedown" hoặc "onclick"
+    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    el.click();
+  }
+
+  inputEl.addEventListener("keydown", (e) => {
+    if (suggestionsBoxEl.classList.contains("hidden")) return;
+    const items = getItems();
+    if (items.length === 0) return;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      activeIndex = (activeIndex + 1) % items.length;
+      highlight(items);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      activeIndex = (activeIndex - 1 + items.length) % items.length;
+      highlight(items);
+    } else if (e.key === "Enter") {
+      if (activeIndex >= 0 && items[activeIndex]) {
+        e.preventDefault();
+        selectItem(items[activeIndex]);
+        activeIndex = -1;
+      }
+    } else if (e.key === "Escape") {
+      suggestionsBoxEl.classList.add("hidden");
+      activeIndex = -1;
+    }
+  });
+
+  // Danh sách gợi ý đổi (gõ thêm ký tự mới) → reset lựa chọn đang highlight
+  new MutationObserver(() => { activeIndex = -1; }).observe(suggestionsBoxEl, { childList: true });
+}
+
 // Thiết lập autocomplete cho một input tên xe (dùng chung)
 function bindModelAutocomplete(inputEl, suggestionsBoxEl, onSelect) {
   function showSuggestions() {
@@ -2099,6 +2230,8 @@ function bindModelAutocomplete(inputEl, suggestionsBoxEl, onSelect) {
       suggestionsBoxEl.classList.add("hidden");
     }
   });
+
+  enableSuggestionKeyboardNav(inputEl, suggestionsBoxEl);
 }
 
 // Xử lý tự động gợi ý (Autocomplete) tên xe khi nhập — Form Mua
@@ -2187,6 +2320,8 @@ function setupBrandAutocomplete() {
       suggestionsBox.classList.add("hidden");
     }
   });
+
+  enableSuggestionKeyboardNav(input, suggestionsBox);
 }
 
 // Theo dõi khi người dùng chọn xe cần bán để hiện giá trung bình & tồn kho của xe đó
@@ -2267,6 +2402,8 @@ function setupColorAutocomplete() {
       suggestionsBox.classList.add("hidden");
     }
   });
+
+  enableSuggestionKeyboardNav(input, suggestionsBox);
 }
 
 // Tự động gợi ý Đóng gói khi nhập
@@ -2318,6 +2455,8 @@ function setupPackagingAutocomplete() {
       suggestionsBox.classList.add("hidden");
     }
   });
+
+  enableSuggestionKeyboardNav(input, suggestionsBox);
 }
 
 function setupSellFormWatcher(inventoryList) {
@@ -2332,6 +2471,8 @@ function setupSellFormWatcher(inventoryList) {
     const val = select.value;
     if (!val) {
       infoBubble.classList.add("hidden");
+      sellPriceInput.dataset.avgCost = ""; // no model selected — clear reference cost for warning 1
+      document.getElementById("sellPriceWarning").classList.add("hidden");
       return;
     }
 
@@ -2354,11 +2495,34 @@ function setupSellFormWatcher(inventoryList) {
       // Gợi ý giá bán = giá mua TB + 30% lãi tạm tính
       sellPriceInput.placeholder = `Gợi ý: ${formatCurrency(item.avgCost * 1.3)}`;
 
+      // CẢNH BÁO 1: lưu avgCost của xe đang chọn để ô giá bán tự so sánh khi gõ
+      sellPriceInput.dataset.avgCost = item.avgCost;
+
       infoBubble.classList.remove("hidden");
     } else {
       infoBubble.classList.add("hidden");
+      sellPriceInput.dataset.avgCost = "";
     }
   });
+
+  // CẢNH BÁO 1: giá bán thấp hơn giá vốn — kiểm tra mỗi khi gõ, không chặn submit.
+  // Guard bằng dataset flag để không gắn thêm listener trùng lặp mỗi lần refreshApplicationData() gọi lại hàm này.
+  if (!sellPriceInput.dataset.warningBound) {
+    sellPriceInput.dataset.warningBound = "1";
+    sellPriceInput.addEventListener("input", () => {
+      const warningEl = document.getElementById("sellPriceWarning");
+      const avgCost = Number(sellPriceInput.dataset.avgCost || 0);
+      const unitPrice = getNumericValue(sellPriceInput.value);
+
+      if (avgCost > 0 && unitPrice > 0 && unitPrice < avgCost) {
+        const loss = avgCost - unitPrice;
+        warningEl.innerText = `⚠️ Giá bán thấp hơn giá vốn ${formatCurrency(avgCost)}. Bạn sẽ lỗ ${formatCurrency(loss)}/chiếc.`;
+        warningEl.classList.remove("hidden");
+      } else {
+        warningEl.classList.add("hidden");
+      }
+    });
+  }
 }
 
 // Thiết lập tự động gợi ý xe trong kho khi gõ ở phần "Bán xe"
@@ -2397,7 +2561,7 @@ function setupSellAutocomplete() {
     ).slice(0, 8);
 
     if (matches.length === 0) {
-      suggestionsBox.innerHTML = `<div class="suggestion-item" style="cursor:default;">Không tìm thấy xe phù hợp trong kho</div>`;
+      suggestionsBox.innerHTML = `<div class="suggestion-item suggestion-item-empty" style="cursor:default;">Không tìm thấy xe phù hợp trong kho</div>`;
       suggestionsBox.classList.remove("hidden");
       return;
     }
@@ -2440,6 +2604,8 @@ function setupSellAutocomplete() {
       suggestionsBox.classList.add("hidden");
     }
   });
+
+  enableSuggestionKeyboardNav(textInput, suggestionsBox);
 }
 
 // Bán nhanh từ nút bấm ở danh sách Kho hàng
@@ -2504,7 +2670,7 @@ function setupReturnAutocomplete() {
     ).slice(0, 8);
 
     if (matches.length === 0) {
-      suggestionsBox.innerHTML = `<div class="suggestion-item" style="cursor:default;">Không tìm thấy giao dịch phù hợp còn có thể trả</div>`;
+      suggestionsBox.innerHTML = `<div class="suggestion-item suggestion-item-empty" style="cursor:default;">Không tìm thấy giao dịch phù hợp còn có thể trả</div>`;
       suggestionsBox.classList.remove("hidden");
       return;
     }
@@ -2558,9 +2724,66 @@ function setupReturnAutocomplete() {
       suggestionsBox.classList.add("hidden");
     }
   });
+
+  enableSuggestionKeyboardNav(textInput, suggestionsBox);
 }
 
 // --- THỰC THI THÊM/XÓA CÁC ĐỐI TƯỢNG (PORTFOLIO & TRANSACTIONS) ---
+
+// --- CẢNH BÁO NHẬP LIỆU (không chặn submit, chỉ hỏi xác nhận) ---
+
+function stripDiacritics(str) {
+  return String(str || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d");
+}
+
+// CẢNH BÁO 2: ghi chú có chứa từ khoá gợi ý đây thực chất là 1 lần trả hàng
+function notesSuggestsReturn(notes) {
+  if (!notes) return false;
+  const normalized = stripDiacritics(notes).toLowerCase();
+  const keywords = ["hoan", "tra", "return", "hang ve", "khach tra"];
+  return keywords.some(k => normalized.includes(k));
+}
+
+// Nếu ghi chú gợi ý trả hàng, hỏi người dùng có muốn chuyển sang form Trả hàng không.
+// Trả về true nếu cần HỦY submit hiện tại (người dùng đã chọn dùng form Trả hàng thay thế).
+function confirmRedirectToReturnFormIfNeeded(notes) {
+  if (!notesSuggestsReturn(notes)) return false;
+
+  const useReturnForm = confirm(
+    "Ghi chú có vẻ liên quan đến trả hàng. Bạn có muốn dùng form Trả hàng thay vì nhập mua/bán mới không?\n\n" +
+    "Nhấn OK để dùng form Trả hàng, hoặc Cancel để tiếp tục nhập như bình thường."
+  );
+
+  if (!useReturnForm) return false; // tiếp tục submit bình thường
+
+  // Chuyển sang tab Giao dịch và focus vào form Trả hàng (theo đúng pattern quickSellCar() đã dùng)
+  const txTabLink = document.querySelector('.nav-link[data-tab="transactions"]');
+  if (txTabLink) txTabLink.click();
+  setTimeout(() => {
+    const returnInput = document.getElementById("returnTxInput");
+    if (returnInput) returnInput.focus();
+  }, 100);
+
+  return true; // hủy submit hiện tại
+}
+
+// CẢNH BÁO 3: phát hiện giao dịch trùng lặp — cùng type, xe, ngày, giá, số lượng
+function isDuplicateTransaction(type, modelName, brand, color, packaging, date, price, qty) {
+  const txs = state.transactions[state.activePortfolioId] || [];
+  const norm = (s) => String(s || "").trim().toLowerCase();
+
+  return txs.some(tx => {
+    if (tx.type !== type) return false;
+    if (norm(tx.modelName) !== norm(modelName)) return false;
+    if (norm(tx.brand) !== norm(brand)) return false;
+    if (norm(tx.color) !== norm(color)) return false;
+    if (norm(tx.packaging) !== norm(packaging)) return false;
+    if (tx.date !== date) return false;
+    if (Number(tx.qty) !== Number(qty)) return false;
+    const txPrice = type === "buy" ? Number(tx.unitCost) : Number(tx.unitPrice);
+    return txPrice === Number(price);
+  });
+}
 
 // Đăng ký các Form Submit
 function setupFormSubmissions() {
@@ -2583,6 +2806,16 @@ function setupFormSubmissions() {
     if (!modelName || !brand || !date || qty <= 0 || unitCost < 0) {
       alert("Vui lòng điền đầy đủ và chính xác thông tin bắt buộc!");
       return;
+    }
+
+    // CẢNH BÁO 2: ghi chú có vẻ nói về trả hàng → gợi ý dùng form Trả hàng thay thế
+    if (confirmRedirectToReturnFormIfNeeded(notes)) return;
+
+    // CẢNH BÁO 3: phát hiện giao dịch trùng lặp (cùng xe, ngày, giá, số lượng)
+    if (isDuplicateTransaction("buy", modelName, brand, color, packaging, date, unitCost, qty)) {
+      if (!confirm("⚠️ Có vẻ bạn đã nhập giao dịch này rồi (cùng xe, ngày, giá, số lượng). Bạn có chắc muốn nhập thêm không?")) {
+        return;
+      }
     }
 
     const newTx = {
@@ -2673,6 +2906,16 @@ function setupFormSubmissions() {
     if (!item || item.stock < qty) {
       alert(`Lỗi: Số lượng bán (${qty}) vượt quá số lượng xe hiện có trong kho (${item ? item.stock : 0} chiếc)!`);
       return;
+    }
+
+    // CẢNH BÁO 2: ghi chú có vẻ nói về trả hàng → gợi ý dùng form Trả hàng thay thế
+    if (confirmRedirectToReturnFormIfNeeded(notes)) return;
+
+    // CẢNH BÁO 3: phát hiện giao dịch trùng lặp (cùng xe, ngày, giá, số lượng)
+    if (isDuplicateTransaction("sell", modelName, brand, color, packaging, date, unitPrice, qty)) {
+      if (!confirm("⚠️ Có vẻ bạn đã nhập giao dịch này rồi (cùng xe, ngày, giá, số lượng). Bạn có chắc muốn nhập thêm không?")) {
+        return;
+      }
     }
 
     const newTx = {
@@ -3369,8 +3612,8 @@ function refreshApplicationData() {
   // (Đã chuyển sang autocomplete tùy chỉnh cho hãng sản xuất, không cần nạp datalist nữa)
 
   // 4. Vẽ lại các biểu đồ đồ họa
-  drawYoYChart("yoyChart", yearlyStats);
-  drawYoYChart("yoyReportChart", yearlyStats);
+  updateYearlyRevenueKPI();
+  drawYoYReportChart(yearlyStats);
   drawChannelChart(activeId);
   drawBrandChart(inventory);
   drawProfitTrendChart(activeId, inventory);
@@ -3386,8 +3629,8 @@ function triggerChartsRefresh() {
   const yearlyStats = calculateYearlyStats(activeId, inventory);
 
   // Vẽ lại đồng loạt
-  drawYoYChart("yoyChart", yearlyStats);
-  drawYoYChart("yoyReportChart", yearlyStats);
+  updateYearlyRevenueKPI();
+  drawYoYReportChart(yearlyStats);
   drawChannelChart(activeId);
   drawBrandChart(inventory);
   drawProfitTrendChart(activeId, inventory);
@@ -4639,6 +4882,20 @@ function openTaxDeclarationDetail(id) {
   document.getElementById('taxDetailChannel').value = decl.salesChannel || 'all';
   document.getElementById('taxDetailPeriodError').style.display = 'none';
 
+  // Cách ghi sổ: mặc định "periodic" (giữ nguyên hành vi cũ) nếu chưa từng chọn
+  const exportStyleSelect = document.getElementById('taxExportStyle');
+  exportStyleSelect.value = decl.exportStyle || 'periodic';
+  // Lưu ngay khi người dùng đổi lựa chọn, không cần đợi bấm "Xuất dữ liệu"
+  if (!exportStyleSelect.dataset.bound) {
+    exportStyleSelect.dataset.bound = '1';
+    exportStyleSelect.addEventListener('change', () => {
+      const currentDecl = ((state.tax && state.tax.declarations) || []).find(d => d.id === _activeTaxDeclarationId);
+      if (!currentDecl) return;
+      currentDecl.exportStyle = exportStyleSelect.value;
+      saveStateToLocalStorage();
+    });
+  }
+
   // Init datepickers cho detail view nếu chưa được init
   if (!window.taxDatePickers) {
     window.taxDatePickers = {
@@ -4680,6 +4937,54 @@ function getFilteredSalesTransactions(reportFrom, reportTo, salesChannel) {
     
     return true;
   }).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+}
+
+// --- Cách ghi sổ tờ khai: "periodic" (gộp theo ngày, mặc định) hoặc "each" (mỗi giao dịch 1 dòng) ---
+// Dùng chung cho cả preview (generateTaxPreviewHtml) và Excel (downloadTaxExcel).
+// Mỗi dòng trả về: { date, description, amount } — amount âm nếu là return_sell.
+
+function getTaxRowUnitPrice(tx) {
+  const finalPriceSource = tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null ? tx.taxUnitPrice : tx.unitPrice;
+  return parseFloat(String(finalPriceSource || '0').replace(/[^0-9.-]+/g, '')) || 0;
+}
+
+// Option 1 — Theo định kỳ: gộp tất cả giao dịch cùng ngày thành 1 dòng "Doanh thu bán hàng"
+function buildPeriodicTaxRows(txs) {
+  const txsByDate = {};
+  txs.forEach(tx => {
+    const price = getTaxRowUnitPrice(tx);
+    const qty = Number(tx.qty) || 1;
+    const amt = price * qty * (tx.type === 'return_sell' ? -1 : 1);
+    if (!txsByDate[tx.date]) txsByDate[tx.date] = 0;
+    txsByDate[tx.date] += amt;
+  });
+
+  return Object.keys(txsByDate).sort().map(date => ({
+    date,
+    description: 'Doanh thu bán hàng',
+    amount: txsByDate[date]
+  }));
+}
+
+// Option 2 — Theo từng lần phát sinh: mỗi giao dịch 1 dòng riêng, không gộp ngày, giữ đúng thứ tự
+function buildEachTransactionTaxRows(txs) {
+  return txs.map(tx => {
+    const price = getTaxRowUnitPrice(tx);
+    const qty = Number(tx.qty) || 1;
+    const isReturn = tx.type === 'return_sell';
+    return {
+      date: tx.date,
+      description: isReturn
+        ? `Hoàn trả ${qty} xe ${tx.modelName} - ${tx.brand}, giảm doanh thu`
+        : `${qty} xe ${tx.modelName} - ${tx.brand}`,
+      amount: price * qty * (isReturn ? -1 : 1)
+    };
+  });
+}
+
+// Chọn nhánh theo decl.exportStyle — mặc định "periodic" nếu chưa từng đặt (tương thích ngược)
+function buildTaxRows(decl, txs) {
+  return decl.exportStyle === 'each' ? buildEachTransactionTaxRows(txs) : buildPeriodicTaxRows(txs);
 }
 
 // --- Tạo Payload S1a-HKD ---
@@ -4776,6 +5081,7 @@ function previewTaxDeclaration() {
   decl.reportPeriod.to   = toVal   || '';
   decl.salesChannel = document.getElementById('taxDetailChannel').value;
   decl.note         = document.getElementById('taxDetailNote').value.trim();
+  decl.exportStyle  = document.getElementById('taxExportStyle').value; // "periodic" | "each"
   saveStateToLocalStorage();
 
   // Bắt đầu trích xuất dữ liệu để build preview
@@ -4822,30 +5128,16 @@ function generateTaxPreviewHtml(decl, info, txs) {
   let rowsHtml = '';
   let totalAmt = 0;
   
-  // Gom nhóm giao dịch theo ngày — trả hàng bán (return_sell) tính là khoản ÂM (giảm trừ doanh thu)
-  const txsByDate = {};
-  txs.forEach(tx => {
-    let finalPriceSource = tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null ? tx.taxUnitPrice : tx.unitPrice;
-    let priceStr = String(finalPriceSource || '0').replace(/[^0-9.-]+/g, "");
-    let price = parseFloat(priceStr) || 0;
-    let qty = Number(tx.qty) || 1;
-    let amt = price * qty * (tx.type === 'return_sell' ? -1 : 1);
-    
-    if (!txsByDate[tx.date]) {
-      txsByDate[tx.date] = 0;
-    }
-    txsByDate[tx.date] += amt;
-  });
-  
-  const groupedDates = Object.keys(txsByDate).sort();
-  groupedDates.forEach(date => {
-    const amt = txsByDate[date];
-    totalAmt += amt;
+  // Cách ghi sổ: "periodic" (gộp theo ngày) hoặc "each" (mỗi giao dịch 1 dòng) — xem buildTaxRows()
+  const taxRows = buildTaxRows(decl, txs);
+
+  taxRows.forEach(r => {
+    totalAmt += r.amount;
     rowsHtml += `
       <tr>
-        <td style="text-align:center;">${formatDate(date)}</td>
-        <td>Doanh thu bán hàng</td>
-        <td class="num-col">${amt.toLocaleString('vi-VN')}</td>
+        <td style="text-align:center;">${formatDate(r.date)}</td>
+        <td>${r.description}</td>
+        <td class="num-col">${r.amount.toLocaleString('vi-VN')}</td>
       </tr>
     `;
   });
@@ -4950,20 +5242,11 @@ async function downloadTaxExcel() {
       }
     }
 
-    const txsByDate = {};
-    txs.forEach(tx => {
-      let finalPriceSource = tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null ? tx.taxUnitPrice : tx.unitPrice;
-      const price = parseFloat(String(finalPriceSource || '0').replace(/[^0-9.-]+/g, '')) || 0;
-      const qty = Number(tx.qty) || 1;
-      // Trả hàng bán (return_sell): giảm trừ doanh thu, tính là khoản âm trong kỳ xảy ra trả hàng
-      const amt = price * qty * (tx.type === 'return_sell' ? -1 : 1);
-      if (!txsByDate[tx.date]) txsByDate[tx.date] = 0;
-      txsByDate[tx.date] += amt;
-    });
-
-    const rows = Object.keys(txsByDate).sort().map(date => ({
-      date: fmtDate(date),
-      amount: txsByDate[date]
+    const taxRows = buildTaxRows(decl, txs);
+    const rows = taxRows.map(r => ({
+      date: fmtDate(r.date),
+      description: r.description,
+      amount: r.amount
     }));
     const total = rows.reduce((s, r) => s + r.amount, 0);
 
@@ -5176,7 +5459,7 @@ async function downloadTaxExcel() {
           for (let i = 0; i < neededRows; i++) {
              const rData = worksheet.getRow(dataStartRow + i);
              rData.getCell(colNgay).value = rows[i].date;
-             rData.getCell(colDienGiai).value = "Doanh thu bán hàng";
+             rData.getCell(colDienGiai).value = rows[i].description;
              rData.getCell(colSoTien).value = rows[i].amount;
              rData.getCell(colSoTien).numFmt = '#,##0'; // Đảm bảo format số
           }
@@ -5256,7 +5539,7 @@ async function downloadTaxExcel() {
       rows.forEach(r => {
          let rData = worksheet.getRow(currentRow);
          rData.getCell(1).value = r.date;
-         rData.getCell(2).value = 'Doanh thu bán hàng';
+         rData.getCell(2).value = r.description;
          rData.getCell(3).value = r.amount;
          setStyle(rData.getCell(1), {align: 'center'});
          setStyle(rData.getCell(2), {align: 'left'});

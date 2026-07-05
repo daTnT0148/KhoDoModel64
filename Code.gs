@@ -54,6 +54,8 @@ function doPost(e) {
       case "uploadImage":        result = uploadImage(body.data);        break;
       case "writeTaxDeclaration":result = writeTaxDeclaration(body.data);break;
       case "scanSheet":          result = scanSheet(body.data);          break;
+      case "uploadVideo":        result = uploadVideo(body.data);        break;
+      case "cleanupVideos":      result = cleanupOldVideos();            break;
       default: result = { error: "Unknown action: " + action };
     }
   } catch (err) {
@@ -81,7 +83,7 @@ function getSheet(name) {
 function ensureTransactionsColumns(sheet) {
   const lastCol = sheet.getLastColumn();
   const headers = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
-  const required = ["relatedTxId", "returnLoss", "taxUnitPrice", "restockToInventory"]; // Trả hàng: liên kết + khoản lỗ + có hoàn kho không | Shopee: giá đăng bán/khai thuế
+  const required = ["relatedTxId", "returnLoss", "taxUnitPrice", "restockToInventory", "updatedAt"]; // Trả hàng: liên kết + khoản lỗ + có hoàn kho không | Shopee: giá đăng bán/khai thuế | Sync: mốc thời gian sửa gần nhất
   let changed = false;
   required.forEach(col => {
     if (headers.indexOf(col) === -1) {
@@ -102,7 +104,7 @@ function createSheet(ss, name) {
     Portfolios:   ["portfolioId", "portfolioName"],
     Transactions: ["id", "portfolioId", "type", "modelName", "brand", "qty",
                    "unitCost", "unitPrice", "channel", "notes", "date", "color", "packaging", "sku",
-                   "relatedTxId", "returnLoss", "taxUnitPrice", "restockToInventory"], // Trả hàng: liên kết + lỗ + hoàn kho | Shopee: giá đăng bán/khai thuế
+                   "relatedTxId", "returnLoss", "taxUnitPrice", "restockToInventory", "updatedAt"], // Trả hàng: liên kết + lỗ + hoàn kho | Shopee: giá đăng bán/khai thuế | Sync: mốc thời gian sửa
     Settings:     ["key", "value"]
   };
   if (headers[name]) {
@@ -165,6 +167,8 @@ function getAllData() {
     if (r.restockToInventory === false || r.restockToInventory === "FALSE" || r.restockToInventory === "false" || r.restockToInventory === "no") {
       tx.restockToInventory = false;
     }
+    // Sync: mốc thời gian sửa gần nhất, dùng để đối chiếu local vs cloud khi merge (client-side)
+    if (r.updatedAt !== undefined && r.updatedAt !== "" && r.updatedAt !== null) tx.updatedAt = Number(r.updatedAt);
     transactions[pid].push(tx);
   });
 
@@ -205,7 +209,8 @@ function saveTransaction(tx) {
     tx.relatedTxId || "", // Trả hàng: liên kết giao dịch gốc
     (tx.type === "return_buy" || tx.type === "return_sell") ? Number(tx.returnLoss || 0) : "",
     (tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null) ? Number(tx.taxUnitPrice) : "", // Shopee: giá đăng bán/khai thuế
-    (tx.type === "return_buy" || tx.type === "return_sell") ? (tx.restockToInventory !== false) : "" // Trả hàng: có hoàn kho không
+    (tx.type === "return_buy" || tx.type === "return_sell") ? (tx.restockToInventory !== false) : "", // Trả hàng: có hoàn kho không
+    (tx.updatedAt !== undefined && tx.updatedAt !== null) ? Number(tx.updatedAt) : "" // Sync: mốc thời gian sửa gần nhất
   ]);
   return { ok: true };
 }
@@ -215,7 +220,7 @@ function updateTransaction(tx) {
   const data  = sheet.getDataRange().getValues();
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][0]) === String(tx.id)) {
-      sheet.getRange(i + 1, 1, 1, 18).setValues([[
+      sheet.getRange(i + 1, 1, 1, 19).setValues([[
         tx.id, tx.portfolioId, tx.type, tx.modelName, tx.brand,
         tx.qty,
         (tx.type === "buy" || tx.type === "return_buy") ? tx.unitCost : "",
@@ -225,7 +230,8 @@ function updateTransaction(tx) {
         tx.relatedTxId || "",
         (tx.type === "return_buy" || tx.type === "return_sell") ? Number(tx.returnLoss || 0) : "",
         (tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null) ? Number(tx.taxUnitPrice) : "",
-        (tx.type === "return_buy" || tx.type === "return_sell") ? (tx.restockToInventory !== false) : ""
+        (tx.type === "return_buy" || tx.type === "return_sell") ? (tx.restockToInventory !== false) : "",
+        (tx.updatedAt !== undefined && tx.updatedAt !== null) ? Number(tx.updatedAt) : ""
       ]]);
       return { ok: true };
     }
@@ -326,7 +332,8 @@ function replaceTransactions(data) {
       tx.relatedTxId || "",
       (tx.type === "return_buy" || tx.type === "return_sell") ? Number(tx.returnLoss || 0) : "",
       (tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null) ? Number(tx.taxUnitPrice) : "",
-      (tx.type === "return_buy" || tx.type === "return_sell") ? (tx.restockToInventory !== false) : ""
+      (tx.type === "return_buy" || tx.type === "return_sell") ? (tx.restockToInventory !== false) : "",
+      (tx.updatedAt !== undefined && tx.updatedAt !== null) ? Number(tx.updatedAt) : ""
     ]);
   });
   sheet.clear();
@@ -606,4 +613,101 @@ function writeTaxDeclaration(data) {
   }
 
   return { ok: true, tab: usedSheetName, debug: { rowHeader: rowHeader+1, colNgay: colNgay+1, dataStart: dataStartRow+1, rowTongCong: rowTongCong+1, rowsWritten: rows.length } };
+}
+
+/* =========================================================================
+ * VIDEO BẰNG CHỨNG ĐÓNG GÓI (record.html)
+ * ========================================================================= */
+
+const VIDEO_FOLDER_NAME = "VideoProof";
+const VIDEO_LOG_SHEET   = "VideoLog";
+const VIDEO_RETENTION_DAYS = 20;
+
+// Tạo sheet VideoLog nếu chưa có, kèm header đúng thứ tự cột
+function ensureVideoLogSheet() {
+  const ss = getSpreadsheet();
+  let sheet = ss.getSheetByName(VIDEO_LOG_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(VIDEO_LOG_SHEET);
+    sheet.appendRow(["fileName", "trackingCode", "uploadDate", "deleteDate", "fileId", "driveUrl"]);
+    sheet.getRange(1, 1, 1, 6).setFontWeight("bold");
+  }
+  return sheet;
+}
+
+// Lấy (hoặc tạo mới) folder Drive "VideoProof"
+function getOrCreateVideoFolder() {
+  const folders = DriveApp.getFoldersByName(VIDEO_FOLDER_NAME);
+  if (folders.hasNext()) return folders.next();
+  return DriveApp.createFolder(VIDEO_FOLDER_NAME);
+}
+
+/**
+ * Action "uploadVideo" — nhận base64 video, lưu vào Drive, ghi log vào sheet VideoLog
+ * data: { base64, mimeType, fileName, trackingCode, uploadDate (ISO string) }
+ */
+function uploadVideo(data) {
+  if (!data || !data.base64 || !data.fileName) {
+    return { error: "Thiếu dữ liệu video (base64, fileName)" };
+  }
+
+  try {
+    const decoded  = Utilities.base64Decode(data.base64);
+    const mimeType = data.mimeType || "video/webm";
+    const blob     = Utilities.newBlob(decoded, mimeType, data.fileName);
+
+    const folder = getOrCreateVideoFolder();
+    const file   = folder.createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+    const fileId   = file.getId();
+    const driveUrl = "https://drive.google.com/file/d/" + fileId + "/view";
+
+    const uploadDate = data.uploadDate ? new Date(data.uploadDate) : new Date();
+    const deleteDate = new Date(uploadDate.getTime() + VIDEO_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+    const logSheet = ensureVideoLogSheet();
+    logSheet.appendRow([data.fileName, data.trackingCode || "", uploadDate, deleteDate, fileId, driveUrl]);
+
+    return { ok: true, fileId: fileId, driveUrl: driveUrl, fileName: data.fileName };
+  } catch (err) {
+    return { error: "Upload video thất bại: " + err.message };
+  }
+}
+
+/**
+ * Xoá các video đã quá hạn lưu trữ (deleteDate < hôm nay).
+ * Gọi qua action "cleanupVideos" HOẶC qua trigger hàng ngày.
+ */
+function cleanupOldVideos() {
+  const sheet = ensureVideoLogSheet();
+  const data  = sheet.getDataRange().getValues();
+  const today = new Date();
+  let deletedCount = 0;
+
+  for (let i = data.length - 1; i >= 1; i--) {
+    const row        = data[i];
+    const deleteDate = row[3];
+    const fileId     = row[4];
+
+    if (deleteDate instanceof Date && deleteDate < today) {
+      try {
+        DriveApp.getFileById(fileId).setTrashed(true);
+      } catch (e) {
+        // File có thể đã bị xoá tay trước đó — vẫn xoá dòng log cho gọn
+      }
+      sheet.deleteRow(i + 1);
+      deletedCount++;
+    }
+  }
+
+  return { ok: true, deletedCount: deletedCount };
+}
+
+// Chạy hàm này MỘT LẦN DUY NHẤT (thủ công trong Apps Script editor) để cài lịch tự động
+function setupDailyVideoCleanupTrigger() {
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === "cleanupOldVideos") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("cleanupOldVideos").timeBased().atHour(3).everyDays(1).create();
 }

@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Bằng chứng đóng gói · Video Proof</title>
+
+<!-- Thư viện quét mã vạch/QR realtime -->
+<script src="https://unpkg.com/@zxing/library@0.20.0"></script>
+
+<style>
+  :root{
+    --bg:#0a0e16;
+    --card:#121826;
+    --card-2:#1a2233;
+    --border:#232d42;
+    --text:#e8ecf4;
+    --text-dim:#8a94ab;
+    --amber:#f5b942;
+    --red:#ef4444;
+    --blue:#38bdf8;
+    --green:#22c55e;
+    --mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    height: 100%;
+    overscroll-behavior: none;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
+  /* ===== Top bar ===== */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px 10px;
+    flex-shrink: 0;
+  }
+  .topbar h1 {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.2px;
+  }
+  .topbar h1 span { color: var(--text-dim); font-weight: 400; }
+
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: var(--mono);
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    background: rgba(245,185,66,0.12);
+    color: var(--amber);
+    border: 1px solid rgba(245,185,66,0.25);
+    transition: all 0.25s ease;
+  }
+  .status-pill .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor;
+  }
+  .status-pill.rec {
+    background: rgba(239,68,68,0.12); color: var(--red); border-color: rgba(239,68,68,0.3);
+    animation: pulseRec 1.2s infinite;
+  }
+  .status-pill.upload { background: rgba(56,189,248,0.12); color: var(--blue); border-color: rgba(56,189,248,0.3); }
+  .status-pill.done { background: rgba(34,197,94,0.12); color: var(--green); border-color: rgba(34,197,94,0.3); }
+  .status-pill.err { background: rgba(239,68,68,0.12); color: var(--red); border-color: rgba(239,68,68,0.3); }
+
+  @keyframes pulseRec {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+  }
+
+  /* ===== Tracking code input ===== */
+  .tracking-section {
+    padding: 0 16px 12px;
+    flex-shrink: 0;
+  }
+  .tracking-row {
+    display: flex;
+    gap: 8px;
+  }
+  .tracking-input-wrap {
+    flex: 1;
+    position: relative;
+  }
+  .tracking-input-wrap label {
+    position: absolute;
+    top: -8px; left: 12px;
+    background: var(--bg);
+    padding: 0 6px;
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+  }
+  #trackingCode {
+    width: 100%;
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    padding: 14px 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  #trackingCode:focus { border-color: var(--amber); }
+  #trackingCode::placeholder { color: var(--text-dim); font-weight: 500; letter-spacing: normal; font-size: 15px; }
+  #trackingCode:disabled { opacity: 0.6; }
+
+  .scan-toggle-btn {
+    width: 54px;
+    flex-shrink: 0;
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    color: var(--amber);
+    font-size: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .scan-toggle-btn.active {
+    border-color: var(--amber);
+    background: rgba(245,185,66,0.1);
+  }
+
+  /* ===== Camera stage ===== */
+  .stage-wrap {
+    flex: 1;
+    padding: 0 16px;
+    display: flex;
+    min-height: 0;
+  }
+  .stage {
+    position: relative;
+    flex: 1;
+    border-radius: 20px;
+    overflow: hidden;
+    background: #000;
+    border: 1.5px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .stage.state-idle { border-color: var(--border); }
+  .stage.state-scan { border-color: rgba(245,185,66,0.5); box-shadow: 0 0 0 1px rgba(245,185,66,0.15), 0 0 24px rgba(245,185,66,0.08) inset; }
+  .stage.state-rec  { border-color: rgba(239,68,68,0.6); box-shadow: 0 0 0 1px rgba(239,68,68,0.2), 0 0 28px rgba(239,68,68,0.1) inset; }
+
+  #outputCanvas {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  #srcVideo { display: none; }
+
+  .scan-reticle {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 78%;
+    max-width: 340px;
+    aspect-ratio: 16/9;
+    pointer-events: none;
+  }
+  .scan-reticle .corner {
+    position: absolute;
+    width: 26px; height: 26px;
+    border: 3px solid var(--amber);
+    opacity: 0.85;
+  }
+  .scan-reticle .tl { top: 0; left: 0; border-right: none; border-bottom: none; border-radius: 8px 0 0 0; }
+  .scan-reticle .tr { top: 0; right: 0; border-left: none; border-bottom: none; border-radius: 0 8px 0 0; }
+  .scan-reticle .bl { bottom: 0; left: 0; border-right: none; border-top: none; border-radius: 0 0 0 8px; }
+  .scan-reticle .br { bottom: 0; right: 0; border-left: none; border-top: none; border-radius: 0 0 8px 0; }
+  .scan-line {
+    position: absolute;
+    left: 4%; right: 4%;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--amber), transparent);
+    animation: scanMove 2.2s ease-in-out infinite;
+    box-shadow: 0 0 8px var(--amber);
+  }
+  @keyframes scanMove {
+    0%, 100% { top: 10%; }
+    50% { top: 88%; }
+  }
+
+  .camera-placeholder {
+    color: var(--text-dim);
+    text-align: center;
+    padding: 32px;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .camera-placeholder .icon { font-size: 40px; margin-bottom: 10px; display:block; }
+
+  /* Chip đồng hồ ghi hình nổi trên góc trên khung camera (chỉ hiển thị UI, phần overlay thật nằm trong canvas) */
+  .rec-chip {
+    position: absolute;
+    top: 12px; left: 12px;
+    display: none;
+    align-items: center;
+    gap: 7px;
+    background: rgba(0,0,0,0.55);
+    backdrop-filter: blur(4px);
+    padding: 7px 12px;
+    border-radius: 100px;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+  }
+  .rec-chip.show { display: flex; }
+  .rec-chip .reddot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--red);
+    animation: pulseRec 1s infinite;
+  }
+
+  /* ===== Bottom control panel ===== */
+  .panel {
+    flex-shrink: 0;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .status-line {
+    text-align: center;
+    font-size: 14px;
+    color: var(--text-dim);
+    min-height: 20px;
+    line-height: 1.5;
+  }
+  .status-line strong { color: var(--text); }
+
+  .btn {
+    border: none;
+    border-radius: 16px;
+    padding: 17px;
+    font-size: 16px;
+    font-weight: 700;
+    font-family: var(--sans);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: transform 0.1s ease, opacity 0.2s;
+    width: 100%;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .btn-amber { background: var(--amber); color: #241a05; }
+  .btn-red   { background: var(--red); color: #fff; }
+  .btn-green { background: var(--green); color: #06210f; }
+  .btn-outline {
+    background: transparent;
+    border: 1.5px solid var(--border);
+    color: var(--text-dim);
+  }
+  .btn-blue { background: var(--blue); color: #052033; }
+
+  .btn-row { display: flex; gap: 10px; }
+  .btn-row .btn { flex: 1; }
+
+  /* Spinner cho trạng thái upload */
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2.5px solid rgba(255,255,255,0.25);
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Overlay lỗi camera / màn chờ bật camera toàn màn hình */
+  .gate {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    text-align: center;
+    gap: 18px;
+  }
+  .gate.hidden { display: none; }
+  .gate .icon-big { font-size: 56px; }
+  .gate h2 { margin: 0; font-size: 19px; }
+  .gate p { margin: 0; color: var(--text-dim); font-size: 14px; line-height: 1.6; max-width: 320px; }
+  .gate .btn { max-width: 280px; }
+
+  .footnote {
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-dim);
+    padding: 0 16px 10px;
+    opacity: 0.7;
+  }
+</style>
+</head>
+<body>
+
+  <!-- ============ MÀN CHỜ BẬT CAMERA (bắt buộc thao tác người dùng để xin quyền đúng cách trên iOS/Android) ============ -->
+  <div class="gate" id="gateStart">
+    <span class="icon-big">🎥</span>
+    <h2>Quay bằng chứng đóng gói</h2>
+    <p>Bấm nút bên dưới để bật camera. Ứng dụng sẽ tự nhận mã vận đơn qua camera và ghi lại toàn bộ quá trình đóng gói kèm dấu thời gian thực.</p>
+    <button class="btn btn-amber" id="btnEnableCamera">📷 Bật camera</button>
+  </div>
+
+  <div class="gate hidden" id="gateError">
+    <span class="icon-big">⚠️</span>
+    <h2>Không truy cập được camera</h2>
+    <p id="gateErrorMsg">Trình duyệt từ chối quyền camera, hoặc thiết bị không hỗ trợ. Vui lòng vào cài đặt trình duyệt → Quyền → Camera → Cho phép, rồi thử lại.</p>
+    <button class="btn btn-amber" id="btnRetryCamera">🔁 Thử lại</button>
+  </div>
+
+  <!-- ============ GIAO DIỆN CHÍNH ============ -->
+  <div class="topbar">
+    <h1>Video Proof <span>· Đóng gói</span></h1>
+    <div class="status-pill" id="statusPill"><span class="dot"></span><span id="statusPillText">Chờ camera</span></div>
+  </div>
+
+  <div class="tracking-section">
+    <div class="tracking-row">
+      <div class="tracking-input-wrap">
+        <label>Mã vận đơn</label>
+        <input type="text" id="trackingCode" placeholder="Quét mã hoặc gõ tay..." autocomplete="off" autocapitalize="characters">
+      </div>
+      <div class="scan-toggle-btn active" id="scanToggleIcon" title="Trạng thái quét mã">▦</div>
+    </div>
+  </div>
+
+  <div class="stage-wrap">
+    <div class="stage state-idle" id="stage">
+      <video id="srcVideo" playsinline muted autoplay></video>
+      <canvas id="outputCanvas"></canvas>
+
+      <div class="scan-reticle" id="scanReticle">
+        <div class="corner tl"></div><div class="corner tr"></div>
+        <div class="corner bl"></div><div class="corner br"></div>
+        <div class="scan-line"></div>
+      </div>
+
+      <div class="rec-chip" id="recChip">
+        <span class="reddot"></span><span id="recTimer">00:00</span>
+      </div>
+
+      <div class="camera-placeholder hidden" id="cameraPlaceholder">
+        <span class="icon">📷</span>Đang khởi động camera...
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="status-line" id="statusLine">Đưa mã vận đơn vào camera để bắt đầu</div>
+
+    <!-- Nút hành động chính (đổi nội dung/màu theo trạng thái) -->
+    <button class="btn btn-amber" id="btnPrimaryAction">▶️ Bắt đầu quay thủ công</button>
+
+    <!-- Hàng nút phụ khi đang quay -->
+    <div class="btn-row hidden" id="rowRecording">
+      <button class="btn btn-red" id="btnStopRecord">⏹️ Dừng &amp; Lưu</button>
+    </div>
+
+    <!-- Hàng nút khi upload lỗi -->
+    <div class="btn-row hidden" id="rowRetry">
+      <button class="btn btn-blue" id="btnRetryUpload">🔁 Thử upload lại</button>
+      <button class="btn btn-outline" id="btnDiscard">🗑️ Bỏ video</button>
+    </div>
+
+    <!-- Nút quay video mới sau khi hoàn tất -->
+    <button class="btn btn-green hidden" id="btnNewRecording">🎬 Quay video mới</button>
+  </div>
+
+  <div class="footnote">Video được lưu trên Google Drive · Tự động xoá sau <span id="footAutoDeleteDays">20</span> ngày</div>
+
+<script>
+/* =========================================================================
+ * CONFIG — dùng chung APPS_SCRIPT_URL + SECRET_KEY với app quản lý kho chính
+ * ========================================================================= */
+const CONFIG = {
+  APPS_SCRIPT_URL: (window.ENV && window.ENV.APPS_SCRIPT_URL) || "URL_CUA_BAN",
+  SECRET_KEY:      (window.ENV && window.ENV.SECRET_KEY)      || "KEY_CUA_BAN",
+  AUTO_DELETE_DAYS: 20
+};
+document.getElementById("footAutoDeleteDays").innerText = CONFIG.AUTO_DELETE_DAYS;
+
+/* =========================================================================
+ * STATE MACHINE
+ * "gate"      -> chưa bật camera
+ * "scanning"  -> camera bật, đang chờ quét mã lần 1 (chưa quay)
+ * "recording" -> đang quay video (chờ quét mã lần 2 hoặc bấm Dừng)
+ * "uploading" -> đang upload lên Drive
+ * "done"      -> upload thành công
+ * "error"     -> upload thất bại (giữ nguyên blob để thử lại)
+ * ========================================================================= */
+let appState = "gate";
+
+let mediaStream = null;
+let srcVideo = document.getElementById("srcVideo");
+let outputCanvas = document.getElementById("outputCanvas");
+let ctx = outputCanvas.getContext("2d");
+
+let codeReader = null;          // ZXing.BrowserMultiFormatReader instance
+let scanningActive = false;     // Cờ bật/tắt việc PHẢN ỨNG với mã quét được (decoder vẫn chạy nền)
+let lastScanTime = 0;           // Chống việc quét dính liên tục 1 mã trong khoảng ngắn
+
+let mediaRecorder = null;
+let recordedChunks = [];
+let recordedBlob = null;
+let recordStartTs = 0;
+let recTimerInterval = null;
+let drawLoopHandle = null;
+
+let currentTrackingCode = "";
+let pendingUploadTrackingCode = ""; // giữ lại mã của video đang chờ upload (dùng khi bấm "Thử lại")
+
+/* ---------------- Wake Lock: giữ màn hình sáng khi đang quay (quay lâu không bị tắt màn hình) ---------------- */
+let wakeLock = null;
+async function requestWakeLock() {
+  try {
+    if ("wakeLock" in navigator) {
+      wakeLock = await navigator.wakeLock.request("screen");
+    }
+  } catch (e) { /* Một số trình duyệt/thiết bị không hỗ trợ — bỏ qua, không chặn luồng chính */ }
+}
+function releaseWakeLock() {
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && appState === "recording") requestWakeLock();
+});
+
+/* ---------------- Beep bằng WebAudio (không cần file âm thanh ngoài) ---------------- */
+let audioCtx = null;
+function beep(times = 1, freq = 880, dur = 0.12, gap = 0.09) {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    let t = audioCtx.currentTime;
+    for (let i = 0; i < times; i++) {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.35, t + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + dur + 0.02);
+      t += dur + gap;
+    }
+  } catch (e) { /* Trình duyệt chặn audio trước tương tác — bỏ qua âm thanh, không chặn luồng chính */ }
+}
+
+/* ---------------- UI helpers ---------------- */
+function setStatusPill(mode, text) {
+  const pill = document.getElementById("statusPill");
+  pill.className = "status-pill" + (mode ? " " + mode : "");
+  document.getElementById("statusPillText").innerText = text;
+}
+function setStatusLine(html) {
+  document.getElementById("statusLine").innerHTML = html;
+}
+function showEl(id, show) {
+  document.getElementById(id).classList.toggle("hidden", !show);
+}
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+function formatElapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${pad2(m)}:${pad2(rem)}`;
+}
+function formatTimestampVN(d) {
+  return `${pad2(d.getDate())}/${pad2(d.getMonth()+1)}/${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+/* =========================================================================
+ * BƯỚC 1 — BẬT CAMERA
+ * ========================================================================= */
+document.getElementById("btnEnableCamera").addEventListener("click", initCamera);
+document.getElementById("btnRetryCamera").addEventListener("click", initCamera);
+
+async function initCamera() {
+  document.getElementById("gateError").classList.add("hidden");
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment", width: 1280, height: 720 },
+      audio: false
+    });
+  } catch (err) {
+    console.error("[Camera] Lỗi truy cập camera:", err);
+    document.getElementById("gateErrorMsg").innerText =
+      err.name === "NotAllowedError"
+        ? "Bạn đã từ chối quyền camera. Vui lòng vào cài đặt trình duyệt để cấp lại quyền, sau đó bấm Thử lại."
+        : "Không tìm thấy camera phù hợp hoặc thiết bị không hỗ trợ. (" + err.message + ")";
+    document.getElementById("gateStart").classList.add("hidden");
+    document.getElementById("gateError").classList.remove("hidden");
+    return;
+  }
+
+  srcVideo.srcObject = mediaStream;
+  await srcVideo.play().catch(() => {});
+
+  // Đợi có kích thước thật của video rồi mới set canvas + bắt đầu vòng lặp vẽ
+  await new Promise(resolve => {
+    if (srcVideo.videoWidth > 0) return resolve();
+    srcVideo.onloadedmetadata = () => resolve();
+  });
+
+  outputCanvas.width = srcVideo.videoWidth || 1280;
+  outputCanvas.height = srcVideo.videoHeight || 720;
+
+  document.getElementById("gateStart").classList.add("hidden");
+  document.getElementById("gateError").classList.add("hidden");
+  document.getElementById("cameraPlaceholder").classList.add("hidden");
+
+  startDrawLoop();
+  initBarcodeReader();
+  enterScanningState();
+}
+
+/* =========================================================================
+ * VÒNG LẶP VẼ CAMERA + OVERLAY LÊN CANVAS
+ * (Canvas này vừa là preview cho người dùng, vừa là nguồn cho MediaRecorder
+ * nên overlay sẽ được ghi thẳng vào video output như yêu cầu)
+ * ========================================================================= */
+function startDrawLoop() {
+  function draw() {
+    if (srcVideo.readyState >= 2) {
+      ctx.drawImage(srcVideo, 0, 0, outputCanvas.width, outputCanvas.height);
+
+      if (appState === "recording") {
+        drawOverlay();
+      }
+    }
+    drawLoopHandle = requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+function drawOverlay() {
+  const w = outputCanvas.width, h = outputCanvas.height;
+  const fontSize = Math.max(20, Math.round(w * 0.032));
+  ctx.font = `700 ${fontSize}px 'JetBrains Mono', monospace`;
+  ctx.textBaseline = "bottom";
+  ctx.lineWidth = Math.max(3, fontSize * 0.16);
+  ctx.strokeStyle = "rgba(0,0,0,0.85)";
+  ctx.fillStyle = "#ffffff";
+  ctx.lineJoin = "round";
+
+  const margin = Math.round(w * 0.025);
+
+  // Góc dưới trái: mã vận đơn
+  const codeText = currentTrackingCode || "—";
+  ctx.textAlign = "left";
+  ctx.strokeText(codeText, margin, h - margin);
+  ctx.fillText(codeText, margin, h - margin);
+
+  // Góc dưới phải: ngày giờ realtime
+  const timeText = formatTimestampVN(new Date());
+  ctx.textAlign = "right";
+  ctx.strokeText(timeText, w - margin, h - margin);
+  ctx.fillText(timeText, w - margin, h - margin);
+}
+
+/* =========================================================================
+ * QUÉT MÃ VẠCH / QR — CHẠY NỀN LIÊN TỤC
+ *
+ * Lưu ý thiết kế: yêu cầu gốc vừa muốn "tắt chế độ quét sau mã lần 1" vừa
+ * muốn "mã lần 2 để dừng quay". Hai ý này chỉ dung hòa được nếu decoder vẫn
+ * chạy ngầm xuyên suốt, nhưng UI/reticle quét ẩn đi sau mã lần 1 và ta chỉ
+ * PHẢN ỨNG khác nhau tuỳ theo appState hiện tại. Cách này vừa cho phép mã
+ * lần 2 dừng quay, vừa tránh hiển thị gây rối vì trông giống "vẫn đang quét".
+ * ========================================================================= */
+function initBarcodeReader() {
+  const hints = new Map();
+  const formats = [
+    ZXing.BarcodeFormat.CODE_128,
+    ZXing.BarcodeFormat.CODE_39,
+    ZXing.BarcodeFormat.EAN_13,
+    ZXing.BarcodeFormat.EAN_8,
+    ZXing.BarcodeFormat.QR_CODE,
+    ZXing.BarcodeFormat.DATA_MATRIX,
+    ZXing.BarcodeFormat.ITF
+  ];
+  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, formats);
+  hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+
+  codeReader = new ZXing.BrowserMultiFormatReader(hints);
+
+  codeReader.decodeFromVideoElementContinuously(srcVideo, (result, err) => {
+    if (result) handleDecodedCode(result.getText());
+    // Lỗi "NotFoundException" bắn liên tục khi không thấy mã trong khung hình — bỏ qua, không phải lỗi thật
+  });
+}
+
+function handleDecodedCode(text) {
+  const now = Date.now();
+  if (now - lastScanTime < 1500) return; // chống quét dính do camera rung/giữ mã lâu trong khung
+  lastScanTime = now;
+
+  if (appState === "scanning") {
+    if (!scanningActive) return; // Người dùng đã tắt chế độ lắng nghe mã để tự gõ tay
+    // Mã lần 1: gán mã vận đơn + bắt đầu quay ngay
+    document.getElementById("trackingCode").value = text;
+    startRecording(text);
+  } else if (appState === "recording") {
+    // Mã lần 2 (mã giống hay khác đều được): dừng quay + upload
+    stopRecordingAndUpload();
+  }
+  // Các trạng thái khác (uploading/done/error): bỏ qua mọi mã quét được
+}
+
+/* =========================================================================
+ * TRẠNG THÁI: SCANNING (chờ quét mã lần 1)
+ * ========================================================================= */
+function enterScanningState() {
+  appState = "scanning";
+  scanningActive = true;
+
+  document.getElementById("stage").className = "stage state-scan";
+  document.getElementById("scanReticle").style.display = "block";
+  document.getElementById("recChip").classList.remove("show");
+  document.getElementById("trackingCode").disabled = false;
+
+  setStatusPill("", "Đang chờ quét mã");
+  setStatusLine("Đưa mã vận đơn vào camera để bắt đầu");
+
+  showEl("rowRecording", false);
+  showEl("rowRetry", false);
+  showEl("btnNewRecording", false);
+
+  const primaryBtn = document.getElementById("btnPrimaryAction");
+  primaryBtn.classList.remove("hidden");
+  primaryBtn.className = "btn btn-amber";
+  primaryBtn.innerHTML = "▶️ Bắt đầu quay thủ công";
+  primaryBtn.disabled = false;
+}
+
+/* =========================================================================
+ * TRẠNG THÁI: RECORDING
+ * ========================================================================= */
+function startRecording(trackingCodeValue) {
+  const codeInput = document.getElementById("trackingCode");
+  const finalCode = (trackingCodeValue || codeInput.value || "").trim();
+
+  if (!finalCode) {
+    alert("Vui lòng nhập hoặc quét mã vận đơn trước khi quay!");
+    return;
+  }
+
+  currentTrackingCode = finalCode;
+  codeInput.value = finalCode;
+  codeInput.disabled = true;
+
+  appState = "recording";
+  document.getElementById("stage").className = "stage state-rec";
+  document.getElementById("scanReticle").style.display = "none";
+  document.getElementById("recChip").classList.add("show");
+
+  setStatusPill("rec", "Đang quay");
+  setStatusLine(`Đang quay bằng chứng cho mã <strong>${finalCode}</strong>`);
+
+  document.getElementById("btnPrimaryAction").classList.add("hidden");
+  showEl("rowRecording", true);
+  showEl("rowRetry", false);
+  showEl("btnNewRecording", false);
+
+  beep(1, 880, 0.13); // beep 1 tiếng khi bắt đầu
+  requestWakeLock();
+
+  // ----- Bắt đầu MediaRecorder từ chính canvas (đã có overlay realtime) -----
+  recordedChunks = [];
+  const canvasStream = outputCanvas.captureStream(30);
+
+  const mimeCandidates = [
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm;codecs=vp8",
+    "video/webm"
+  ];
+  const chosenMime = mimeCandidates.find(m => MediaRecorder.isTypeSupported(m)) || "";
+
+  try {
+    mediaRecorder = chosenMime
+      ? new MediaRecorder(canvasStream, { mimeType: chosenMime, videoBitsPerSecond: 2_500_000 })
+      : new MediaRecorder(canvasStream);
+  } catch (e) {
+    console.error("[Recorder] Không khởi tạo được MediaRecorder:", e);
+    alert("Thiết bị/trình duyệt này không hỗ trợ quay video. Vui lòng thử bằng Chrome trên Android.");
+    enterScanningState();
+    return;
+  }
+
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+  };
+  mediaRecorder.onstop = onRecorderStopped;
+  mediaRecorder.start(1000); // cắt chunk mỗi 1s để đảm bảo không mất dữ liệu nếu treo
+
+  recordStartTs = Date.now();
+  recTimerInterval = setInterval(() => {
+    document.getElementById("recTimer").innerText = formatElapsed(Date.now() - recordStartTs);
+  }, 500);
+}
+
+document.getElementById("btnStopRecord").addEventListener("click", () => {
+  stopRecordingAndUpload();
+});
+
+// Nút hành động chính khi đang ở trạng thái "scanning" -> quay thủ công
+document.getElementById("btnPrimaryAction").addEventListener("click", () => {
+  if (appState === "scanning") {
+    startRecording(document.getElementById("trackingCode").value.trim());
+  }
+});
+
+function stopRecordingAndUpload() {
+  if (appState !== "recording" || !mediaRecorder) return;
+  if (mediaRecorder.state !== "inactive") {
+    mediaRecorder.stop();
+  }
+  clearInterval(recTimerInterval);
+  beep(2, 660, 0.11); // beep 2 tiếng khi dừng
+  releaseWakeLock();
+}
+
+function onRecorderStopped() {
+  const mime = mediaRecorder.mimeType || "video/webm";
+  recordedBlob = new Blob(recordedChunks, { type: mime });
+  pendingUploadTrackingCode = currentTrackingCode;
+
+  document.getElementById("recChip").classList.remove("show");
+  uploadVideo(recordedBlob, pendingUploadTrackingCode);
+}
+
+/* =========================================================================
+ * TRẠNG THÁI: UPLOADING
+ * ========================================================================= */
+function uploadVideo(blob, trackingCodeValue) {
+  appState = "uploading";
+  document.getElementById("stage").className = "stage state-idle";
+
+  setStatusPill("upload", "Đang upload");
+  setStatusLine(`<span class="spinner" style="display:inline-block;vertical-align:middle;margin-right:6px;"></span> Đang upload video lên Google Drive...`);
+
+  document.getElementById("btnPrimaryAction").classList.add("hidden");
+  showEl("rowRecording", false);
+  showEl("rowRetry", false);
+  showEl("btnNewRecording", false);
+
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const base64 = reader.result.split(",")[1];
+    const uploadDate = new Date();
+    const fileName = `${sanitizeForFileName(trackingCodeValue)}_${fileTimestamp(uploadDate)}.webm`;
+
+    try {
+      const res = await fetch(CONFIG.APPS_SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({
+          action: "uploadVideo",
+          key: CONFIG.SECRET_KEY,
+          data: {
+            base64,
+            mimeType: blob.type || "video/webm",
+            fileName,
+            trackingCode: trackingCodeValue,
+            uploadDate: uploadDate.toISOString()
+          }
+        })
+      });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+
+      enterDoneState(json);
+    } catch (err) {
+      console.error("[Upload] Lỗi:", err);
+      enterErrorState(err.message);
+    }
+  };
+  reader.onerror = () => enterErrorState("Không đọc được dữ liệu video từ bộ nhớ máy.");
+  reader.readAsDataURL(blob);
+}
+
+function sanitizeForFileName(str) {
+  return String(str || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 60);
+}
+function fileTimestamp(d) {
+  return `${d.getFullYear()}${pad2(d.getMonth()+1)}${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
+}
+
+/* =========================================================================
+ * TRẠNG THÁI: DONE
+ * ========================================================================= */
+function enterDoneState(result) {
+  appState = "done";
+  setStatusPill("done", "Hoàn tất");
+  setStatusLine(`✅ Đã lưu thành công cho mã <strong>${pendingUploadTrackingCode}</strong>! Video sẽ tự xoá sau ${CONFIG.AUTO_DELETE_DAYS} ngày.`);
+
+  showEl("rowRetry", false);
+  showEl("rowRecording", false);
+  document.getElementById("btnPrimaryAction").classList.add("hidden");
+  showEl("btnNewRecording", true);
+
+  recordedBlob = null;
+  recordedChunks = [];
+}
+
+/* =========================================================================
+ * TRẠNG THÁI: ERROR (giữ nguyên blob để cho phép thử lại, không mất video)
+ * ========================================================================= */
+function enterErrorState(message) {
+  appState = "error";
+  setStatusPill("err", "Lỗi upload");
+  setStatusLine(`⚠️ Upload thất bại: ${message || "Lỗi không xác định"}. Video vẫn được giữ trên máy, bấm thử lại khi có mạng.`);
+
+  document.getElementById("btnPrimaryAction").classList.add("hidden");
+  showEl("rowRecording", false);
+  showEl("rowRetry", true);
+  showEl("btnNewRecording", false);
+}
+
+document.getElementById("btnRetryUpload").addEventListener("click", () => {
+  if (recordedBlob) {
+    uploadVideo(recordedBlob, pendingUploadTrackingCode);
+  } else {
+    alert("Không còn dữ liệu video trong bộ nhớ. Vui lòng quay lại từ đầu.");
+    enterScanningState();
+  }
+});
+
+document.getElementById("btnDiscard").addEventListener("click", () => {
+  if (confirm("Bỏ video này? Sẽ không thể khôi phục lại.")) {
+    recordedBlob = null;
+    recordedChunks = [];
+    document.getElementById("trackingCode").disabled = false;
+    document.getElementById("trackingCode").value = "";
+    currentTrackingCode = "";
+    enterScanningState();
+  }
+});
+
+/* =========================================================================
+ * QUAY VIDEO MỚI (reset về trạng thái chờ quét)
+ * ========================================================================= */
+document.getElementById("btnNewRecording").addEventListener("click", () => {
+  document.getElementById("trackingCode").disabled = false;
+  document.getElementById("trackingCode").value = "";
+  currentTrackingCode = "";
+  recordedBlob = null;
+  recordedChunks = [];
+  enterScanningState();
+});
+
+/* =========================================================================
+ * Bật/tắt hiển thị chế độ quét bằng icon góc (chỉ mang tính hiển thị —
+ * decoder vẫn luôn chạy nền; nút này để người dùng biết mã có đang được
+ * "lắng nghe" hay không, hữu ích khi họ muốn tự tay gõ mã mà không sợ
+ * camera bắt nhầm mã khác đang nằm trong khung hình).
+ * ========================================================================= */
+document.getElementById("scanToggleIcon").addEventListener("click", () => {
+  if (appState !== "scanning") return;
+  scanningActive = !scanningActive;
+  const icon = document.getElementById("scanToggleIcon");
+  icon.classList.toggle("active", scanningActive);
+  document.getElementById("scanReticle").style.display = scanningActive ? "block" : "none";
+});
+
+/* Cho phép gõ tay mã vận đơn rồi bấm "Bắt đầu quay thủ công" mà không cần quét */
+document.getElementById("trackingCode").addEventListener("input", (e) => {
+  if (appState === "scanning") currentTrackingCode = e.target.value.trim();
+});
+</script>
+</body>
+</html>

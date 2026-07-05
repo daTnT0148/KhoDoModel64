@@ -1100,6 +1100,27 @@ body {
   color: var(--text-white);
 }
 
+/* Điều hướng bằng bàn phím (↑ ↓) — dùng chung style với :hover để nhất quán */
+.suggestion-item.active {
+  background: var(--primary);
+  color: var(--text-white);
+}
+
+.suggestion-item.active .suggest-brand {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* Dòng "Không tìm thấy..." — không cho phép chọn/highlight */
+.suggestion-item-empty {
+  cursor: default;
+  color: var(--text-muted);
+}
+
+.suggestion-item-empty:hover {
+  background: transparent;
+  color: var(--text-muted);
+}
+
 .suggestion-item .suggest-brand {
   font-size: 11px;
   color: var(--text-muted);

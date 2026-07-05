@@ -54,7 +54,82 @@ function showSyncStatus(status, message) {
   }
 }
 
+// ─── Offline sync queue (pendingOps) ─────────────────────────────────────────
+// Stores writes that failed to reach the cloud so they can be replayed later,
+// instead of being silently dropped once the tab is closed.
+const PENDING_OPS_KEY = "model_car_pending_ops";
+
+function loadPendingOps() {
+  try {
+    const raw = localStorage.getItem(PENDING_OPS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    console.error("[Sync Queue] Failed to read pending ops, resetting queue", e);
+    return [];
+  }
+}
+
+function savePendingOps(ops) {
+  localStorage.setItem(PENDING_OPS_KEY, JSON.stringify(ops));
+}
+
+function enqueuePendingOp(action, data) {
+  const ops = loadPendingOps();
+  ops.push({
+    id: "op-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
+    action,
+    data,
+    ts: Date.now()
+  });
+  savePendingOps(ops);
+}
+
+// Replays every queued op against the cloud, in original order, keeping whatever
+// still fails in the queue (order preserved) so nothing is lost or duplicated.
+async function flushPendingOps() {
+  if (!isCloudConfigured()) return;
+  const ops = loadPendingOps();
+  if (ops.length === 0) return;
+
+  showSyncStatus("syncing", `Đang đồng bộ ${ops.length} thao tác đang chờ...`);
+  const remaining = [];
+  for (const op of ops) {
+    try {
+      await rawApiPost(op.action, op.data);
+    } catch (err) {
+      console.error("[Sync Queue] Replay failed, will retry later:", op.action, err);
+      remaining.push(op);
+    }
+  }
+  savePendingOps(remaining);
+
+  if (remaining.length === 0) {
+    showSyncStatus("success", "Đã đồng bộ toàn bộ thao tác chờ ✓");
+  } else {
+    showSyncStatus("error", `Còn ${remaining.length} thao tác chưa đồng bộ được`);
+  }
+}
+
+// Retry automatically when the browser regains connectivity
+window.addEventListener("online", () => {
+  console.log("[Sync Queue] Back online, flushing pending ops");
+  flushPendingOps();
+});
+
 // ─── API calls ────────────────────────────────────────────────────────────────
+
+// Core network call, no fallback/queueing — used both by apiPost() and flushPendingOps()
+// so a replayed op goes through the exact same path as a live one.
+async function rawApiPost(action, data) {
+  const res = await fetch(APPS_SCRIPT_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" }, // Apps Script yêu cầu text/plain để tránh preflight
+    body: JSON.stringify({ action, data, key: API_SECRET_KEY })
+  });
+  const json = await res.json();
+  if (json.error) throw new Error(json.error);
+  return json;
+}
 
 async function apiPost(action, data) {
   if (!isCloudConfigured()) {
@@ -65,22 +140,18 @@ async function apiPost(action, data) {
 
   showSyncStatus("syncing", "Đang đồng bộ...");
   try {
-    const res = await fetch(APPS_SCRIPT_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain" }, // Apps Script yêu cầu text/plain để tránh preflight
-      body: JSON.stringify({ action, data, key: API_SECRET_KEY })
-    });
-    const json = await res.json();
-    if (json.error) throw new Error(json.error);
+    const json = await rawApiPost(action, data);
     showSyncStatus("success", "Đã lưu lên Cloud ✓");
     // Luôn lưu localStorage song song làm cache offline
     saveStateToLocalStorage();
     return json;
   } catch (err) {
     console.error("[Cloud] POST error:", err);
-    showSyncStatus("error", "Lỗi đồng bộ — đã lưu Local");
+    // Network/API failure — queue the op instead of dropping it, so it retries once back online
+    enqueuePendingOp(action, data);
+    showSyncStatus("error", "Mất mạng — đã lưu Local, sẽ tự đồng bộ khi có mạng");
     saveStateToLocalStorage();
-    return { ok: false, error: err.message };
+    return { ok: false, queued: true, error: err.message };
   }
 }
 
@@ -102,6 +173,135 @@ async function apiGet() {
   }
 }
 
+// ─── Reconciliation helpers (local vs cloud, id-based) ───────────────────────
+
+// Which transaction ids currently have an unconfirmed write sitting in the queue.
+// Anything in here means "cloud has not seen this change yet" — the merge must not
+// let a stale cloud copy overwrite it.
+function getPendingTxTouchedIds() {
+  const ops = loadPendingOps();
+  const saveIds = new Set();
+  const deleteIds = new Set();
+  const replacePortfolioIds = new Set();
+
+  ops.forEach(op => {
+    if ((op.action === "saveTransaction" || op.action === "updateTransaction") && op.data && op.data.id) {
+      saveIds.add(op.data.id);
+    } else if (op.action === "deleteTransaction" && op.data && op.data.id) {
+      deleteIds.add(op.data.id);
+    } else if (op.action === "replaceTransactions" && op.data && op.data.portfolioId) {
+      replacePortfolioIds.add(op.data.portfolioId);
+    }
+  });
+
+  return { saveIds, deleteIds, replacePortfolioIds };
+}
+
+// Merge one portfolio's local + cloud transaction arrays into a single reconciled array.
+// Rules (safety over strictness):
+//   - a pending delete always wins → the id is dropped, even if cloud still has it
+//   - a pending save/update always wins → keep the local copy, ignore cloud's version
+//   - present on both sides → prefer whichever has the newer updatedAt (cloud if unknown)
+//   - present locally only (no pending op explains it) → KEEP IT, never silently drop
+//   - present on cloud only → adopt it (another device/session created it)
+function reconcileTransactions(localTxs, cloudTxs, pending) {
+  const localMap = new Map((localTxs || []).map(t => [t.id, t]));
+  const cloudMap = new Map((cloudTxs || []).map(t => [t.id, t]));
+  const allIds = new Set([...localMap.keys(), ...cloudMap.keys()]);
+  const result = [];
+
+  allIds.forEach(id => {
+    if (pending.deleteIds.has(id)) return; // honor the not-yet-synced local delete
+
+    if (pending.saveIds.has(id)) {
+      if (localMap.has(id)) result.push(localMap.get(id));
+      return;
+    }
+
+    const localTx = localMap.get(id);
+    const cloudTx = cloudMap.get(id);
+
+    if (localTx && cloudTx) {
+      const localTime = Number(localTx.updatedAt || 0);
+      const cloudTime = Number(cloudTx.updatedAt || 0);
+      result.push(localTime > cloudTime ? localTx : cloudTx);
+    } else if (localTx) {
+      result.push(localTx); // data-safety: never drop a local-only record silently
+    } else {
+      result.push(cloudTx);
+    }
+  });
+
+  return result;
+}
+
+// Merge cloud data into the in-memory state IN PLACE. Never assigns state.transactions/
+// state.portfolios wholesale from cloud — always reconciles id by id.
+function mergeStateFromCloud(cloudData) {
+  if (!cloudData) return;
+
+  const pendingTx = getPendingTxTouchedIds();
+  const ops = loadPendingOps();
+  const pendingPortfolioSaveIds = new Set(
+    ops.filter(op => op.action === "savePortfolio" && op.data && op.data.id).map(op => op.data.id)
+  );
+  const pendingPortfolioDeleteIds = new Set(
+    ops.filter(op => op.action === "deletePortfolio" && op.data && op.data.id).map(op => op.data.id)
+  );
+  const hasPendingSettings = ops.some(op => op.action === "saveSettings");
+
+  // --- Portfolios ---
+  if (Array.isArray(cloudData.portfolios)) {
+    const localMap = new Map((state.portfolios || []).map(p => [p.id, p]));
+    const cloudMap = new Map(cloudData.portfolios.map(p => [p.id, p]));
+    const allIds = new Set([...localMap.keys(), ...cloudMap.keys()]);
+    const merged = [];
+
+    allIds.forEach(id => {
+      if (pendingPortfolioDeleteIds.has(id)) return;
+      if (pendingPortfolioSaveIds.has(id)) {
+        if (localMap.has(id)) merged.push(localMap.get(id));
+        return;
+      }
+      if (cloudMap.has(id)) {
+        merged.push(cloudMap.get(id)); // no pending edit — cloud is the confirmed copy
+      } else if (localMap.has(id)) {
+        merged.push(localMap.get(id)); // data-safety: keep local-only portfolio
+      }
+    });
+
+    if (merged.length > 0) state.portfolios = merged;
+  }
+
+  // --- Transactions, reconciled per portfolio ---
+  if (cloudData.transactions) {
+    if (!state.transactions) state.transactions = {};
+    const allPortfolioIds = new Set([
+      ...Object.keys(state.transactions),
+      ...Object.keys(cloudData.transactions)
+    ]);
+
+    allPortfolioIds.forEach(pid => {
+      // A full replaceTransactions push is still queued for this portfolio — local
+      // array is the intended final state, don't let a stale cloud pull touch it.
+      if (pendingTx.replacePortfolioIds.has(pid)) return;
+
+      const localTxs = state.transactions[pid] || [];
+      const cloudTxs = cloudData.transactions[pid] || [];
+      state.transactions[pid] = reconcileTransactions(localTxs, cloudTxs, pendingTx);
+    });
+  }
+
+  // --- Scalar settings — only adopt cloud values if nothing local is unsynced for them ---
+  if (!hasPendingSettings) {
+    if (cloudData.currency) state.currency = cloudData.currency;
+    if (cloudData.feeSettings) state.feeSettings = cloudData.feeSettings;
+    if (cloudData.activePortfolioId && state.portfolios.some(p => p.id === cloudData.activePortfolioId)) {
+      state.activePortfolioId = cloudData.activePortfolioId;
+    }
+  }
+}
+
 // ─── Load dữ liệu khi mở app ─────────────────────────────────────────────────
 
 async function loadData() {
@@ -117,15 +317,16 @@ async function loadData() {
     return;
   }
 
+  // Push whatever was queued while offline BEFORE pulling, so the pull already
+  // reflects our own writes instead of racing with them.
+  await flushPendingOps();
+
   const cloudData = await apiGet();
   if (!cloudData) return; // Offline — dữ liệu localStorage đã được load
 
-  // Merge cloud data vào state
-  state.portfolios        = cloudData.portfolios;
-  state.activePortfolioId = cloudData.activePortfolioId;
-  state.transactions      = cloudData.transactions;
-  state.currency          = cloudData.currency;
-  if (cloudData.feeSettings) state.feeSettings = cloudData.feeSettings;
+  // Merge instead of overwrite — an unsynced local edit must never be lost just
+  // because the cloud pull ran before it was confirmed.
+  mergeStateFromCloud(cloudData);
 
   if (typeof window.migrateLegacySKUs === "function") {
     const changedPortfolios = window.migrateLegacySKUs();
@@ -145,6 +346,8 @@ async function loadData() {
 // ─── Các hàm ghi — thay thế saveStateToLocalStorage() ───────────────────────
 
 function dbSaveTransaction(tx) {
+  // Backward-compatible: existing records without this field just compare as "oldest"
+  tx.updatedAt = Date.now();
   return apiPost("saveTransaction", {
     ...tx,
     portfolioId: state.activePortfolioId
@@ -152,6 +355,7 @@ function dbSaveTransaction(tx) {
 }
 
 function dbUpdateTransaction(tx) {
+  tx.updatedAt = Date.now();
   return apiPost("updateTransaction", {
     ...tx,
     portfolioId: state.activePortfolioId
@@ -180,6 +384,21 @@ function dbSaveSettings() {
 
 function dbReplaceTransactions(portfolioId, transactions) {
   return apiPost("replaceTransactions", { portfolioId, transactions });
+}
+
+// ─── Recovery: force local → cloud ────────────────────────────────────────────
+// Pushes the full local transaction list for one portfolio to the Sheet, overwriting
+// whatever is currently there. Use when local is known-good and cloud is suspected
+// to be missing/out of sync (e.g. after a long offline stretch, or a bad merge).
+// Goes through dbReplaceTransactions, so a network failure here queues normally too.
+async function syncPortfolioToCloud(portfolioId) {
+  const txs = (state.transactions && state.transactions[portfolioId]) || [];
+  showSyncStatus("syncing", "Đang đẩy toàn bộ dữ liệu portfolio lên Cloud...");
+  const result = await dbReplaceTransactions(portfolioId, txs);
+  if (result && result.ok !== false) {
+    showSyncStatus("success", "Đã đồng bộ toàn bộ portfolio lên Cloud ✓");
+  }
+  return result;
 }
 
 // ─── IMAGE OPTIMIZE + UPLOAD lên Google Drive ────────────────────────────────
