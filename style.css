@@ -240,6 +240,30 @@ body {
   box-shadow: 0 4px 15px var(--primary-glow);
 }
 
+/* Shortcut mở link ngoài (Google Sheets/Drive) trong sidebar — giống hệt .nav-link về giao diện,
+   nhưng KHÔNG dùng class .nav-link để tránh bị bắt bởi listener chuyển tab trong setupTabNavigation() */
+.nav-link-external {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  color: var(--text-muted);
+  text-decoration: none;
+  border-radius: var(--border-radius-md);
+  font-weight: 500;
+  transition: var(--transition);
+}
+
+.nav-link-external i {
+  width: 20px;
+  height: 20px;
+}
+
+.nav-link-external:hover {
+  color: var(--text-white);
+  background: rgba(255, 255, 255, 0.03);
+}
+
 /* Sidebar Footer */
 .sidebar-footer {
   border-top: 1px solid var(--card-border);

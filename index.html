@@ -151,6 +151,19 @@
               <span>Cài đặt</span>
             </a>
           </li>
+          <!-- Shortcut mở nhanh Google Sheets / Google Drive của dữ liệu (không phải tab, nên KHÔNG dùng class nav-link để tránh bị bắt bởi listener chuyển tab) -->
+          <li>
+            <a href="#" class="nav-link-external" onclick="window.open('https://docs.google.com/spreadsheets/d/1VB01bVUDH-fBKwiS4JfOhiNSqsH37snzYZnHefq86Xs/edit?gid=0#gid=0', '_blank'); return false;">
+              <i data-lucide="database"></i>
+              <span>Google Sheets</span>
+            </a>
+          </li>
+          <li>
+            <a href="#" class="nav-link-external" onclick="window.open('https://drive.google.com/drive/folders/1eaGPgd7czUjSTBBXPsFJ1LT4ac4TlFHg?usp=drive_link', '_blank'); return false;">
+              <i data-lucide="folder"></i>
+              <span>Google Drive</span>
+            </a>
+          </li>
         </ul>
       </nav>
 
