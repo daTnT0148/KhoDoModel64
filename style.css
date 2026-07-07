@@ -1515,7 +1515,7 @@ body {
 }
 
 @media (max-width: 768px) {
-  /* Sidebar Mobile */
+  /* Sidebar Mobile — giữ nguyên logic ẩn/hiện hiện có */
   .sidebar {
     transform: translateX(-100%);
     width: 260px;
@@ -1532,7 +1532,7 @@ body {
   
   .main-content {
     margin-left: 0;
-    padding: 20px;
+    padding: 16px;
   }
   
   .menu-toggle-btn {
@@ -1544,6 +1544,140 @@ body {
   }
   
   .report-columns {
+    grid-template-columns: 1fr;
+  }
+
+  /* 1. KPI Grid */
+  .kpi-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  /* 2. Chart Row */
+  .chart-row {
+    grid-template-columns: 1fr;
+  }
+
+  .chart-side-column {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .chart-small {
+    flex: 1;
+    min-width: 150px;
+  }
+
+  /* 3. Transaction Forms */
+  .form-card {
+    padding: 20px;
+  }
+
+  /* 4. Filter Bar */
+  .filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .search-input-wrapper {
+    width: 100%;
+  }
+
+  .filter-controls {
+    flex-wrap: wrap;
+  }
+
+  .filter-controls select {
+    flex: 1;
+    min-width: 120px;
+  }
+
+  /* 5. Data Tables — cho phép scroll ngang thay vì bị bóp méo */
+  .table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .data-table {
+    min-width: 600px;
+  }
+
+  /* 6. Settings Grid */
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-card-full {
+    grid-column: 1;
+  }
+
+  /* 7. Shopee Calc Grid */
+  .shopee-calc-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  /* 8. Report Columns (đã có report-columns 1fr ở trên, giữ nguyên) */
+
+  /* 9. Modal */
+  .modal-card {
+    width: calc(100vw - 32px);
+    max-width: 100%;
+  }
+
+  .modal-card form {
+    padding: 16px;
+  }
+
+  .modal-header {
+    padding: 16px;
+  }
+
+  .modal-footer {
+    flex-direction: column-reverse;
+  }
+
+  /* 10. Top Navbar */
+  .top-navbar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .nav-right {
+    flex-wrap: wrap;
+  }
+
+  /* 13. Tax Declaration Grid */
+  .tax-declaration-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  /* 14. Header Filters (lịch sử giao dịch) */
+  .header-filters {
+    flex-wrap: wrap;
+  }
+
+  .header-filters select {
+    flex: 1;
+    min-width: 100px;
+  }
+
+  /* 15. Profit Breakdown */
+  .profit-breakdown {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Màn rất nhỏ — thu về 1 cột cho các grid vẫn còn 2 cột ở breakpoint 768px */
+  .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .shopee-calc-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tax-declaration-grid {
     grid-template-columns: 1fr;
   }
 }

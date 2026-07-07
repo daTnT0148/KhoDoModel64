@@ -168,7 +168,10 @@ async function apiGet() {
     return json;
   } catch (err) {
     console.error("[Cloud] GET error:", err);
-    showSyncStatus("offline", "Offline — dùng dữ liệu Local");
+    let errMsg = err.message;
+    if (errMsg.includes("Unexpected token")) errMsg = "Lỗi phản hồi (có thể do chuyển hướng đăng nhập Google hoặc hết Quota)";
+    if (errMsg.includes("Failed to fetch")) errMsg = "Lỗi kết nối hoặc bị chặn bởi CORS/Adblock";
+    showSyncStatus("error", "Lỗi tải Cloud: " + errMsg);
     return null;
   }
 }
