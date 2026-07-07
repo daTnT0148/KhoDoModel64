@@ -1547,9 +1547,22 @@ body {
     grid-template-columns: 1fr;
   }
 
-  /* 1. KPI Grid */
+  /* 1. KPI Grid — carousel vuốt ngang thay vì xếp chồng dọc (chỉ CSS, không cần JS/HTML) */
   .kpi-grid {
-    grid-template-columns: 1fr 1fr;
+    display: flex;
+    grid-template-columns: unset; /* huỷ grid, chuyển sang flex để scroll-snap hoạt động */
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    gap: 12px;
+    padding-bottom: 8px;
+    margin-bottom: 20px;
+  }
+
+  .kpi-grid .kpi-card {
+    scroll-snap-align: start;
+    flex: 0 0 85%;
+    min-width: 240px;
   }
 
   /* 2. Chart Row */
@@ -1665,14 +1678,39 @@ body {
     flex-wrap: wrap;
     gap: 4px;
   }
+
+  /* Mobile density pass — các card này vẫn giữ nguyên padding/font-size desktop (24px/28px/26px)
+     khiến trang vẫn có cảm giác "phóng to bản desktop" dù layout đã về 1 cột đúng */
+  .top-navbar {
+    margin-bottom: 20px;
+    padding-bottom: 14px;
+  }
+
+  .top-navbar h1 {
+    font-size: 20px;
+  }
+
+  .kpi-card,
+  .chart-card,
+  .dashboard-table-card {
+    padding: 16px;
+  }
+
+  .kpi-value {
+    font-size: 22px;
+  }
+
+  .kpi-header {
+    margin-bottom: 10px;
+  }
+
+  .chart-card-header {
+    margin-bottom: 16px;
+  }
 }
 
 @media (max-width: 480px) {
   /* Màn rất nhỏ — thu về 1 cột cho các grid vẫn còn 2 cột ở breakpoint 768px */
-  .kpi-grid {
-    grid-template-columns: 1fr;
-  }
-
   .shopee-calc-grid {
     grid-template-columns: 1fr;
   }
