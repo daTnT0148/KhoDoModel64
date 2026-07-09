@@ -2867,3 +2867,68 @@ body {
     display: none !important;
   }
 }
+
+/* ================= PWA: BANNER CÀI ĐẶT APP ================= */
+.pwa-install-banner {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 9998;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--card-bg);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid var(--card-border);
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.35);
+}
+
+.pwa-install-banner.hidden {
+  display: none;
+}
+
+.pwa-install-banner-icon img {
+  display: block;
+  border-radius: 8px;
+}
+
+.pwa-install-banner-text {
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-main);
+}
+
+.pwa-install-btn {
+  flex-shrink: 0;
+  background: var(--primary);
+  color: var(--text-white);
+  border: none;
+  border-radius: var(--border-radius-sm);
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pwa-install-close-btn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+/* Chỉ hiện banner trên mobile — chặn cứng ở desktop dù JS có lỡ gọi nhầm */
+@media (min-width: 769px) {
+  .pwa-install-banner {
+    display: none !important;
+  }
+}

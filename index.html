@@ -4,6 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mô Hình 64 - Trình Quản Lý Kho & Mua Bán Xe 1:64</title>
+
+  <!-- PWA: manifest + theme color + iOS Safari meta -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#6366f1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MH64">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
   <!-- Google Fonts: Outfit -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1240,6 +1249,70 @@
       <div id="imgLightboxCaption" class="img-lightbox-caption"></div>
     </div>
   </div>
+
+  <!-- PWA: banner gợi ý cài app, chỉ hiện trên mobile khi trình duyệt hỗ trợ install -->
+  <div id="pwaInstallBanner" class="pwa-install-banner hidden">
+    <div class="pwa-install-banner-icon">
+      <img src="icon-192.png" alt="MH64" width="36" height="36">
+    </div>
+    <div class="pwa-install-banner-text">Tải app về điện thoại để dùng nhanh hơn</div>
+    <button id="pwaInstallBtn" class="pwa-install-btn" type="button">Cài đặt</button>
+    <button id="pwaInstallCloseBtn" class="pwa-install-close-btn" type="button" aria-label="Đóng">&times;</button>
+  </div>
+
+  <!-- PWA: đăng ký service worker + xử lý banner cài đặt -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('service-worker.js').catch((err) => {
+          console.error('[PWA] Đăng ký service worker thất bại:', err);
+        });
+      });
+    }
+
+    (function () {
+      const DISMISS_KEY = 'pwa_install_dismissed';
+      let deferredPrompt = null;
+
+      const banner = document.getElementById('pwaInstallBanner');
+      const installBtn = document.getElementById('pwaInstallBtn');
+      const closeBtn = document.getElementById('pwaInstallCloseBtn');
+      if (!banner || !installBtn || !closeBtn) return;
+
+      function isMobileViewport() {
+        return window.matchMedia('(max-width: 768px)').matches;
+      }
+
+      // Chrome/Edge Android bắn sự kiện này khi trình duyệt xác nhận app đủ điều kiện cài đặt
+      window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        if (isMobileViewport() && !localStorage.getItem(DISMISS_KEY)) {
+          banner.classList.remove('hidden');
+        }
+      });
+
+      installBtn.addEventListener('click', async () => {
+        if (!deferredPrompt) return;
+        banner.classList.add('hidden');
+        deferredPrompt.prompt();
+        await deferredPrompt.userChoice;
+        deferredPrompt = null;
+      });
+
+      closeBtn.addEventListener('click', () => {
+        banner.classList.add('hidden');
+        localStorage.setItem(DISMISS_KEY, '1');
+      });
+
+      // Đã cài xong thì không cần hiện banner nữa
+      window.addEventListener('appinstalled', () => {
+        banner.classList.add('hidden');
+        localStorage.setItem(DISMISS_KEY, '1');
+        deferredPrompt = null;
+      });
+    })();
+  </script>
 
 </body>
 </html>
