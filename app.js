@@ -5976,3 +5976,13 @@ window.addEventListener("DOMContentLoaded", async () => {
   // 3. Tính toán và làm tươi dữ liệu ban đầu
   refreshApplicationData();
 });
+
+// --- BOTTOM NAVIGATION (mobile) ---
+// Không cần logic chuyển tab riêng: các link trong #bottomNav dùng chung class "nav-link"
+// và "data-tab" với sidebar, nên setupTabNavigation() (đã có sẵn ở trên) tự động xử lý luôn
+// việc chuyển panel + đồng bộ trạng thái active giữa sidebar và bottom nav.
+// Chỉ cần đảm bảo icon Lucide trong bottom nav được render (phòng trường hợp hiếm gặp icon
+// chưa kịp vẽ khi DOMContentLoaded chạy quá sớm).
+window.addEventListener("load", () => {
+  if (window.lucide) lucide.createIcons();
+});

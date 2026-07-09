@@ -1533,10 +1533,12 @@ body {
   .main-content {
     margin-left: 0;
     padding: 16px;
+    padding-bottom: calc(16px + 64px + env(safe-area-inset-bottom, 0px)); /* chừa chỗ cho bottom nav cố định, tránh che nội dung */
   }
   
+  /* Bottom nav thay thế sidebar trên mobile — không cần nút mở sidebar nữa */
   .menu-toggle-btn {
-    display: block;
+    display: none;
   }
   
   .transaction-forms-row {
@@ -1547,22 +1549,11 @@ body {
     grid-template-columns: 1fr;
   }
 
-  /* 1. KPI Grid — carousel vuốt ngang thay vì xếp chồng dọc (chỉ CSS, không cần JS/HTML) */
+  /* 1. KPI Grid — 2 cột tĩnh (thay cho carousel vuốt ngang ở bản trước, theo yêu cầu mới) */
   .kpi-grid {
-    display: flex;
-    grid-template-columns: unset; /* huỷ grid, chuyển sang flex để scroll-snap hoạt động */
-    overflow-x: auto;
-    scroll-snap-type: x mandatory;
-    -webkit-overflow-scrolling: touch;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 12px;
-    padding-bottom: 8px;
-    margin-bottom: 20px;
-  }
-
-  .kpi-grid .kpi-card {
-    scroll-snap-align: start;
-    flex: 0 0 85%;
-    min-width: 240px;
   }
 
   /* 2. Chart Row */
@@ -1673,10 +1664,52 @@ body {
     min-width: 100px;
   }
 
-  /* 15. Profit Breakdown */
-  .profit-breakdown {
-    flex-wrap: wrap;
-    gap: 4px;
+  /* 5. Form nhập Mua/Bán/Trả hàng — input đủ to để bấm tay, font-size 16px tránh iOS tự động zoom */
+  .styled-form input[type="text"],
+  .styled-form input[type="number"],
+  .styled-form input[type="date"],
+  .styled-form select,
+  .styled-form textarea {
+    min-height: 48px;
+    font-size: 16px;
+  }
+
+  .styled-form button[type="submit"] {
+    width: 100%;
+    height: 52px;
+    font-size: 15px;
+  }
+
+  .modal-footer .btn {
+    width: 100%;
+    height: 48px;
+  }
+
+  /* 4. Bảng Kho hàng — ẩn bớt cột ít quan trọng, chỉ giữ Tên xe / Số lượng / Giá / Thao tác.
+     Chỉ áp dụng cho #inventoryTable (không ảnh hưởng bảng Top/Slow Models hay Lịch sử giao dịch). */
+  #inventoryTable th:nth-child(1),
+  #inventoryTable td:nth-child(1),
+  #inventoryTable th:nth-child(4),
+  #inventoryTable td:nth-child(4),
+  #inventoryTable th:nth-child(5),
+  #inventoryTable td:nth-child(5),
+  #inventoryTable th:nth-child(7),
+  #inventoryTable td:nth-child(7),
+  #inventoryTable th:nth-child(8),
+  #inventoryTable td:nth-child(8),
+  #inventoryTable th:nth-child(9),
+  #inventoryTable td:nth-child(9),
+  #inventoryTable th:nth-child(10),
+  #inventoryTable td:nth-child(10),
+  #inventoryTable th:nth-child(11),
+  #inventoryTable td:nth-child(11) {
+    display: none;
+  }
+
+  /* 6. Header mobile — chỉ giữ tiêu đề trang, ẩn bộ chọn tiền tệ/tỷ giá cho gọn */
+  .currency-switcher,
+  .quick-stats-badge {
+    display: none;
   }
 
   /* Mobile density pass — các card này vẫn giữ nguyên padding/font-size desktop (24px/28px/26px)
@@ -1690,14 +1723,17 @@ body {
     font-size: 20px;
   }
 
-  .kpi-card,
+  .kpi-card {
+    padding: 18px;
+  }
+
   .chart-card,
   .dashboard-table-card {
     padding: 16px;
   }
 
   .kpi-value {
-    font-size: 22px;
+    font-size: 24px;
   }
 
   .kpi-header {
@@ -1706,6 +1742,12 @@ body {
 
   .chart-card-header {
     margin-bottom: 16px;
+  }
+
+  /* 15. Profit Breakdown */
+  .profit-breakdown {
+    flex-wrap: wrap;
+    gap: 4px;
   }
 }
 
@@ -2930,5 +2972,58 @@ body {
 @media (min-width: 769px) {
   .pwa-install-banner {
     display: none !important;
+  }
+}
+
+/* ================= BOTTOM NAVIGATION BAR (thay sidebar trên mobile) ================= */
+.bottom-nav {
+  display: none; /* chỉ hiện trên mobile, bật lại trong @media bên dưới */
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 9997; /* dưới banner PWA (9998) một chút, để banner đè lên trên nếu cả 2 cùng hiện */
+  background: var(--card-bg);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid var(--card-border);
+  padding-bottom: env(safe-area-inset-bottom, 0px); /* né vùng home-indicator/notch iPhone */
+}
+
+/* Ghi đè riêng cho item trong bottom-nav — không đụng CSS .nav-link gốc dùng cho sidebar */
+.bottom-nav .nav-link.bottom-nav-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 8px 4px 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  text-decoration: none;
+  border-radius: 0;
+  transition: var(--transition);
+}
+
+.bottom-nav .nav-link.bottom-nav-item i {
+  width: 20px;
+  height: 20px;
+}
+
+.bottom-nav .nav-link.bottom-nav-item.active {
+  color: var(--primary);
+  background: transparent; /* .nav-link.active gốc tô nền — bottom nav chỉ cần đổi màu icon/chữ */
+  box-shadow: none;
+}
+
+@media (max-width: 768px) {
+  .bottom-nav {
+    display: flex;
+  }
+
+  /* Banner PWA (nếu đang hiện) phải nằm phía trên bottom-nav, không đè lên nhau */
+  .pwa-install-banner {
+    bottom: calc(64px + env(safe-area-inset-bottom, 0px));
   }
 }
