@@ -1234,7 +1234,7 @@ function renderInventoryTable(inventory) {
           </div>
         </div>
         <span class="badge ${isOutOfStock ? 'badge-out-of-stock' : 'badge-in-stock'}">
-          ${isOutOfStock ? 'Hết hàng' : `Còn ${item.stock} chiếc`}
+          ${isOutOfStock ? 'Hết hàng' : `Còn ${item.stock}`}
         </span>
       </div>
 
@@ -1257,6 +1257,10 @@ function renderInventoryTable(inventory) {
         <div class="stat-item">
           <span class="stat-label">Giá hòa vốn Shopee</span>
           <span class="stat-value text-orange">${formatCurrency(item.breakEvenPrice)}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Giá bán mục tiêu</span>
+          <span class="stat-value text-orange">${formatCurrency(targetPrice)}</span>
         </div>
         <div class="stat-item">
           <span class="stat-label">Đã bán</span>
