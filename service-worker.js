@@ -10,7 +10,6 @@ const STATIC_ASSETS = [
   './style.css',
   './app.js',
   './db.js',
-  './env.js',
   './mock_db.js',
   './manifest.json'
 ];
