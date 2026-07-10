@@ -948,6 +948,7 @@ body {
 .stat-item {
   display: flex;
   flex-direction: column;
+  min-width: 0; /* same fix as .kpi-card — let currency values shrink instead of forcing grid overflow */
 }
 
 .stat-label {
@@ -959,6 +960,7 @@ body {
   font-size: 14px;
   font-weight: 600;
   color: var(--text-white);
+  overflow-wrap: break-word;
 }
 
 .car-card-footer {
@@ -1561,14 +1563,31 @@ body {
     grid-template-columns: 1fr;
   }
 
+  /* Grid children default to min-width:auto (= min-content), so long numbers/titles force
+     the track wider than 1fr and get clipped by body's overflow-x:hidden. This is the real
+     cause of the "phình ngang sau khi load data" bug — allow every card to actually shrink. */
+  .kpi-grid > .kpi-card,
+  .chart-row > .chart-card,
+  .chart-row > .chart-side-column,
+  .transaction-forms-row > .form-card,
+  .report-columns > * {
+    min-width: 0;
+  }
+
+  .kpi-value {
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
   .chart-side-column {
     flex-direction: row;
     flex-wrap: wrap;
+    gap: 12px; /* was inheriting desktop's 24px, too tight alongside 2x min-width:150px on narrow phones */
   }
 
   .chart-small {
     flex: 1;
-    min-width: 150px;
+    min-width: 130px;
   }
 
   /* 3. Transaction Forms */
@@ -3026,4 +3045,17 @@ body {
   .pwa-install-banner {
     bottom: calc(64px + env(safe-area-inset-bottom, 0px));
   }
+}
+
+/* ================= GLOBAL HORIZONTAL OVERFLOW SAFETY NET =================
+   `body` already had overflow-x:hidden, but only clips AFTER the fact — it doesn't fix
+   grid/flex children forcing extra width in the first place (the real bug, fixed above
+   via min-width:0). Adding these as a defensive last line, not a replacement for that fix. */
+html {
+  overflow-x: hidden;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
 }
