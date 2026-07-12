@@ -2055,6 +2055,35 @@ function setupInventoryViewToggle() {
   });
 }
 
+// Auto-switch inventory to card view on mobile, table view on desktop.
+// Runs once on load and again on resize so rotating the phone also works.
+// Reuses the exact same show/hide logic as the toggle buttons — no new state introduced.
+function applyInventoryViewForViewport() {
+  const tableBtn = document.getElementById("viewTableBtn");
+  const gridBtn = document.getElementById("viewGridBtn");
+  const tableContainer = document.getElementById("inventoryTableContainer");
+  const gridContainer = document.getElementById("inventoryGridContainer");
+  if (!tableBtn || !gridBtn || !tableContainer || !gridContainer) return;
+
+  if (window.innerWidth <= 768) {
+    // Mobile: force card view
+    gridBtn.classList.add("active");
+    tableBtn.classList.remove("active");
+    gridContainer.classList.remove("hidden");
+    tableContainer.classList.add("hidden");
+  } else {
+    // Desktop: restore table view only if the user hasn't manually switched to cards
+    if (!gridBtn.classList.contains("active")) return; // user already chose table — don't override
+    // If we got here, it means we previously forced card view; restore default table view
+    tableBtn.classList.add("active");
+    gridBtn.classList.remove("active");
+    tableContainer.classList.remove("hidden");
+    gridContainer.classList.add("hidden");
+  }
+}
+
+window.addEventListener("resize", applyInventoryViewForViewport);
+
 // --- LOGIC XỬ LÝ SỰ KIỆN FORM (MUA & BÁN) ---
 
 // Lấy danh sách gợi ý xe từ tất cả portfolio + MOCK_SUGGESTED_CARS (dùng chung)
@@ -5952,6 +5981,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   renderPortfolioSelectors();
   setupTabNavigation();
   setupInventoryViewToggle();
+  applyInventoryViewForViewport(); // auto-switch to card view if on mobile at startup
   setupAutocomplete();
   setupBrandAutocomplete();
   setupColorAutocomplete();
@@ -5983,6 +6013,55 @@ window.addEventListener("DOMContentLoaded", async () => {
 // việc chuyển panel + đồng bộ trạng thái active giữa sidebar và bottom nav.
 // Chỉ cần đảm bảo icon Lucide trong bottom nav được render (phòng trường hợp hiếm gặp icon
 // chưa kịp vẽ khi DOMContentLoaded chạy quá sớm).
+
+// --- TRANSACTION TAB SWITCHER (mobile only) ---
+// Switches which form-card is visible when the user taps Mua/Bán/Hoàn on mobile.
+// No form logic is touched — only CSS class toggling on the .form-card wrappers.
+// On desktop the switcher is display:none so this code has zero effect there.
+(function setupTxTabSwitcher() {
+  const switcher = document.getElementById('txTabSwitcher');
+  if (!switcher) return;
+
+  function getFormCard(formId) {
+    const form = document.getElementById(formId);
+    return form ? form.closest('.form-card') : null;
+  }
+
+  function activate(btn) {
+    const formId = btn.dataset.form;
+    const target = getFormCard(formId);
+    if (!target) return;
+
+    switcher.querySelectorAll('.tx-tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.transaction-forms-row .form-card').forEach(c => c.classList.remove('tx-form-active'));
+
+    btn.classList.add('active');
+    target.classList.add('tx-form-active');
+
+    if (window.lucide) lucide.createIcons();
+  }
+
+  function init() {
+    if (window.innerWidth > 768) return;
+    const firstBtn = switcher.querySelector('.tx-tab-btn');
+    if (firstBtn) activate(firstBtn);
+  }
+
+  switcher.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tx-tab-btn');
+    if (btn) activate(btn);
+  });
+
+  window.addEventListener('DOMContentLoaded', init);
+
+  // Re-init when user taps Giao Dịch in bottom nav or sidebar
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('[data-tab="transactions"]') && window.innerWidth <= 768) {
+      setTimeout(init, 50);
+    }
+  });
+})();
+
 window.addEventListener("load", () => {
   if (window.lucide) lucide.createIcons();
 });

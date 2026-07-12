@@ -1517,7 +1517,109 @@ body {
 }
 
 @media (max-width: 768px) {
-  /* Sidebar Mobile — giữ nguyên logic ẩn/hiện hiện có */
+  /* Transaction tab switcher: hidden on desktop, shown on mobile */
+  .tx-tab-switcher {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--border-radius-md);
+    padding: 6px;
+  }
+
+  .tx-tab-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 8px;
+    background: none;
+    border: none;
+    border-radius: var(--border-radius-sm);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-family: var(--font-family);
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition);
+  }
+
+  .tx-tab-btn i {
+    width: 18px;
+    height: 18px;
+  }
+
+  .tx-tab-btn.active {
+    background: var(--primary);
+    color: #fff;
+  }
+
+  /* Trên mobile: ẩn các form-card không được chọn, chỉ hiện cái đang active */
+  .transaction-forms-row {
+    display: block; /* override grid thành block để chỉ 1 card hiện tại 1 thời điểm */
+  }
+
+  .transaction-forms-row .form-card {
+    display: none; /* JS sẽ bật display:block cho cái đang active */
+  }
+
+  .transaction-forms-row .form-card.tx-form-active {
+    display: block;
+  }
+
+  /* Dashboard mobile: biểu đồ luôn hiện, sắp xếp lại bằng CSS thuần */
+  .dashboard-charts-toggle {
+    display: none; /* bỏ nút toggle */
+  }
+
+  .dashboard-charts-section {
+    display: block;
+    max-height: unset;
+    overflow: visible;
+  }
+
+  /* chart-row trên desktop là 2fr 1fr — mobile đổi thành 1 cột */
+  .chart-row {
+    grid-template-columns: 1fr;
+  }
+
+  /* chart-large (Doanh thu năm nay) trên mobile: gọn lại, chỉ hiện số */
+  .chart-large {
+    padding: 16px !important;
+    min-height: unset;
+  }
+
+  .chart-large h3 {
+    font-size: 13px !important;
+  }
+
+  .chart-large #val-yearly-revenue {
+    font-size: 1.8rem !important;
+  }
+
+  /* 2 biểu đồ tròn: đổi từ flex-column thành grid 2 cột */
+  .chart-side-column {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    flex-direction: unset;
+    flex-wrap: unset;
+  }
+
+  .chart-small .chart-wrapper {
+    height: 140px;
+  }
+
+  .chart-small .chart-card-header h3 {
+    font-size: 11px;
+  }
+
+  .chart-small .chart-tag {
+    font-size: 9px;
+  }
+
   .sidebar {
     transform: translateX(-100%);
     width: 260px;
@@ -1579,15 +1681,15 @@ body {
     word-break: break-word;
   }
 
+  /* 2 biểu đồ tròn: grid 2 cột thay cho flex cũ */
   .chart-side-column {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 12px; /* was inheriting desktop's 24px, too tight alongside 2x min-width:150px on narrow phones */
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
   }
 
   .chart-small {
-    flex: 1;
-    min-width: 130px;
+    min-width: 0;
   }
 
   /* 3. Transaction Forms */
@@ -1681,6 +1783,91 @@ body {
   .header-filters select {
     flex: 1;
     min-width: 100px;
+  }
+
+  /* Kho hàng — ẩn nút toggle bảng/thẻ trên mobile vì đã tự động chuyển sang dạng thẻ */
+  .view-toggle {
+    display: none;
+  }
+
+  /* 2 cột thẻ xe trên mobile */
+  .inventory-grid-container {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  /* Thu gọn từng card để vừa 2 cột */
+  .car-card {
+    padding: 10px;
+  }
+
+  .car-card-header h4 {
+    font-size: 12px;
+    line-height: 1.3;
+  }
+
+  .car-card-header span {
+    font-size: 10px;
+  }
+
+  /* Ảnh nhỏ lại */
+  .car-card-visual {
+    height: 72px;
+    font-size: 24px;
+    margin-bottom: 8px;
+  }
+
+  /* Chỉ hiện 4 stat quan trọng nhất: Giá mua TB, Hòa vốn, Đã bán, Doanh thu
+     Ẩn Tổng nhập (ít quan trọng) và Giá bán mục tiêu (trùng ý với hòa vốn) */
+  .car-card-stats {
+    gap: 6px;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+  }
+
+  .car-card-stats .stat-item:nth-child(1),
+  .car-card-stats .stat-item:nth-child(4) {
+    display: none;
+  }
+
+  .stat-label {
+    font-size: 9px;
+  }
+
+  .stat-value {
+    font-size: 11px;
+  }
+
+  /* Ẩn SKU row để gọn trên 2 cột nhỏ */
+  .sku-inline {
+    display: none;
+  }
+
+  /* Footer — stack lợi nhuận + nút bán dọc */
+  .car-card-footer {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .car-card-footer .btn {
+    width: 100%;
+    justify-content: center;
+    font-size: 11px;
+    padding: 6px 8px;
+    height: auto;
+    min-height: unset;
+  }
+
+  .card-profit-group .stat-value {
+    font-size: 11px;
+  }
+
+  /* Badge tồn kho nhỏ lại để không đẩy header xuống */
+  .car-card .badge {
+    font-size: 9px;
+    padding: 3px 5px;
+    white-space: nowrap;
   }
 
   /* 5. Form nhập Mua/Bán/Trả hàng — input đủ to để bấm tay, font-size 16px tránh iOS tự động zoom */
@@ -2929,6 +3116,15 @@ body {
   }
 }
 
+/* Dashboard charts toggle (mobile only) */
+.dashboard-charts-toggle {
+  display: none; /* hidden on desktop */
+}
+
+.dashboard-charts-section {
+  /* always visible on desktop */
+}
+
 /* ================= PWA: BANNER CÀI ĐẶT APP ================= */
 .pwa-install-banner {
   position: fixed;
@@ -3058,4 +3254,186 @@ html {
 img {
   max-width: 100%;
   height: auto;
+}
+
+/* ============================================================
+   MOBILE FIX — Thêm vào CUỐI style.css
+   ============================================================ */
+
+@media (max-width: 768px) {
+
+  html, body {
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+
+  .main-content {
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+
+  /* KPI Cards */
+  .kpi-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px;
+  }
+
+  .kpi-card {
+    min-width: 0 !important;
+    padding: 14px 12px;
+  }
+
+  .kpi-value {
+    font-size: 18px !important;
+    overflow-wrap: break-word;
+    word-break: break-all;
+  }
+
+  /* Transaction Forms */
+  .transaction-forms-row {
+    display: block !important;
+    width: 100%;
+  }
+
+  .form-card {
+    min-width: 0 !important;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  /* Form row 2 cột → 1 cột */
+  .styled-form .form-row {
+    grid-template-columns: 1fr !important;
+    gap: 0;
+  }
+
+  .styled-form input[type="text"],
+  .styled-form input[type="number"],
+  .styled-form input[type="date"],
+  .styled-form select,
+  .styled-form textarea {
+    font-size: 16px !important;
+    min-height: 44px;
+  }
+
+  /* Settings */
+  .settings-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .settings-card {
+    min-width: 0 !important;
+    width: 100%;
+  }
+
+  /* Reports */
+  .report-columns {
+    grid-template-columns: 1fr !important;
+  }
+
+  .report-card {
+    min-width: 0 !important;
+  }
+
+  #yoyStatsTable {
+    min-width: 560px;
+  }
+
+  #transactionHistoryTable {
+    min-width: 580px;
+  }
+
+  #transactionHistoryTable th:nth-child(8),
+  #transactionHistoryTable td:nth-child(8) {
+    display: none;
+  }
+
+  /* Charts */
+  .chart-wrapper {
+    height: 200px !important;
+  }
+
+  .chart-wrapper-large {
+    height: 200px !important;
+  }
+
+  .chart-small .chart-wrapper {
+    height: 140px !important;
+  }
+
+  /* Modal — dạng bottom sheet */
+  .modal-card {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    margin: 0 !important;
+    border-radius: 16px 16px 0 0;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+
+  .modal-card-large {
+    width: 100vw !important;
+    max-width: 100vw !important;
+  }
+
+  .modal-footer {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .modal-footer .btn {
+    width: 100%;
+  }
+
+  /* Shopee Calc */
+  .shopee-calc-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Header Filters */
+  .card-header-actions {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .header-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+  }
+
+  .header-filters select {
+    flex: 1;
+    min-width: 90px;
+    font-size: 12px;
+  }
+
+  /* Tutorial */
+  .tutorial-content {
+    grid-template-columns: 1fr !important;
+  }
+
+  .top-navbar {
+    flex-wrap: nowrap;
+    overflow: hidden;
+  }
+}
+
+@media (max-width: 380px) {
+  .kpi-value {
+    font-size: 15px !important;
+  }
+
+  .kpi-card {
+    padding: 10px 8px;
+  }
+
+  .tax-declaration-grid {
+    grid-template-columns: 1fr !important;
+  }
 }

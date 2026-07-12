@@ -271,9 +271,11 @@
             </div>
           </div>
 
-          <!-- Charts Row -->
+          <!-- Charts section -->
+          <div class="dashboard-charts-section" id="dashboardChartsSection">
+
+          <!-- Charts Row — desktop: yearly revenue left (2fr) + 2 pie charts right (1fr) -->
           <div class="chart-row">
-            <!-- Doanh thu năm hiện tại -->
             <div class="chart-card chart-large" style="display:flex; flex-direction:column; justify-content:center; align-items:center; padding-bottom:30px;">
               <div class="chart-card-header" style="width:100%; text-align:center; display:flex; flex-direction:column; gap:6px;">
                 <h3 style="font-size:18px;"><i data-lucide="calendar"></i> Doanh thu tổng năm nay</h3>
@@ -283,10 +285,8 @@
                 <h1 id="val-yearly-revenue" style="font-size: 2.8rem; color: var(--success); margin: 0; font-weight:800; text-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);">0 vnd</h1>
               </div>
             </div>
-            
-            <!-- Side Charts (Pie & Doughnut) -->
+
             <div class="chart-side-column">
-              <!-- Channels Breakdown -->
               <div class="chart-card chart-small">
                 <div class="chart-card-header">
                   <h3>Tỷ trọng kênh bán hàng</h3>
@@ -297,7 +297,6 @@
                 </div>
               </div>
 
-              <!-- Brand Allocation -->
               <div class="chart-card chart-small">
                 <div class="chart-card-header">
                   <h3>Tỷ trọng theo hãng xe</h3>
@@ -326,6 +325,8 @@
               </div>
             </div>
           </div>
+
+          </div><!-- end .dashboard-charts-section -->
 
           <!-- Top Performing Models -->
           <div class="dashboard-table-card">
@@ -525,6 +526,22 @@
         <!-- ================= PANEL 3: TRANSACTIONS ================= -->
         <section class="panel" id="panel-transactions">
           
+          <!-- Tab switcher: chỉ hiện trên mobile, desktop giữ nguyên 3 form side-by-side -->
+          <div class="tx-tab-switcher" id="txTabSwitcher">
+            <button class="tx-tab-btn active" data-form="buyForm" type="button">
+              <i data-lucide="plus-circle"></i>
+              <span>Mua</span>
+            </button>
+            <button class="tx-tab-btn" data-form="sellForm" type="button">
+              <i data-lucide="minus-circle"></i>
+              <span>Bán</span>
+            </button>
+            <button class="tx-tab-btn" data-form="returnForm" type="button">
+              <i data-lucide="rotate-ccw"></i>
+              <span>Hoàn</span>
+            </button>
+          </div>
+
           <div class="transaction-forms-row">
             
             <!-- BUY Form (Nhập Kho) -->
