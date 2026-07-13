@@ -1238,7 +1238,7 @@ function renderInventoryTable(inventory) {
         </span>
       </div>
 
-      <div class="car-card-visual" style="cursor:pointer;" onclick="event.stopPropagation();${imgPath ? `openImgLightbox('${imgPath}','${item.modelName.replace(/'/g,"\\'")}')` : 'void(0)'}">
+      <div class="car-card-visual" style="cursor:pointer;">
         ${imgPath
           ? `<img src="${imgPath}" alt="${item.modelName}" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" onerror="this.outerHTML='🚗'">`
           : '🚗'}
@@ -1287,6 +1287,17 @@ function renderInventoryTable(inventory) {
         }
       </div>
     `;
+
+    // Click handler cho ảnh để xem ảnh lớn
+    const visual = card.querySelector(".car-card-visual");
+    if (visual) {
+      visual.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (imgPath) {
+          openImgLightbox(imgPath, item.modelName);
+        }
+      });
+    }
 
     // Trên mobile: bấm vào card mở modal chi tiết
     card.addEventListener("click", (e) => {
@@ -6084,113 +6095,119 @@ window.addEventListener("load", () => {
 // ─── MOBILE: Mở Modal Chi tiết Xe ──────────────────────────────────────────
 
 function openCarDetailModal(item, targetPrice) {
-  const modal = document.getElementById("carDetailModal");
-  if (!modal) return;
+  try {
+    const modal = document.getElementById("carDetailModal");
+    if (!modal) return;
 
-  const isOutOfStock = item.stock === 0;
-  const imgKey  = buildCarImageKey(item.modelName, item.brand, item.color, item.packaging);
-  const imgPath = getCarImage(imgKey);
+    const isOutOfStock = item.stock === 0;
+    const imgKey  = buildCarImageKey(item.modelName, item.brand, item.color, item.packaging);
+    const imgPath = getCarImage(imgKey);
 
-  // Header
-  document.getElementById("carDetailModelName").textContent = item.modelName;
-  document.getElementById("carDetailSubtitle").textContent  =
-    [item.brand, item.color ? `Màu: ${item.color}` : "", item.packaging ? `Gói: ${item.packaging}` : ""]
-      .filter(Boolean).join(" · ");
+    // Header
+    document.getElementById("carDetailModelName").textContent = item.modelName;
+    document.getElementById("carDetailSubtitle").textContent  =
+      [item.brand, item.color ? `Màu: ${item.color}` : "", item.packaging ? `Gói: ${item.packaging}` : ""]
+        .filter(Boolean).join(" · ");
 
-  // Hình ảnh
-  const visual = document.getElementById("carDetailVisual");
-  document.getElementById("carDetailBrandOverlay").textContent = item.brand;
-  if (imgPath) {
-    visual.innerHTML = `<img src="${imgPath}" alt="${item.modelName}" style="width:100%;height:100%;object-fit:cover;border-radius:12px;" onerror="this.outerHTML='<span style=\\'font-size:48px;\\'>🚗</span>'"><div class="brand-overlay">${item.brand}</div>`;
-  } else {
-    visual.innerHTML = `<span style="font-size:48px;">🚗</span><div class="brand-overlay">${item.brand}</div>`;
-  }
+    // Hình ảnh
+    const visual = document.getElementById("carDetailVisual");
+    document.getElementById("carDetailBrandOverlay").textContent = item.brand;
+    if (imgPath) {
+      visual.innerHTML = `<img src="${imgPath}" alt="${item.modelName}" style="width:100%;height:100%;object-fit:cover;border-radius:12px;" onerror="this.outerHTML='<span style=\\'font-size:48px;\\'>🚗</span>'"><div class="brand-overlay">${item.brand}</div>`;
+    } else {
+      visual.innerHTML = `<span style="font-size:48px;">🚗</span><div class="brand-overlay">${item.brand}</div>`;
+    }
 
-  // Badge trạng thái
-  const badge = document.getElementById("carDetailStockBadge");
-  badge.textContent = isOutOfStock ? "Hết hàng" : `Còn ${item.stock} chiếc`;
-  badge.className   = `badge ${isOutOfStock ? "badge-out-of-stock" : "badge-in-stock"}`;
-  document.getElementById("carDetailSKU").textContent = "SKU: " + generateSKU(item.brand, item.modelName, item.color, item.packaging);
+    // Badge trạng thái
+    const badge = document.getElementById("carDetailStockBadge");
+    badge.textContent = isOutOfStock ? "Hết hàng" : `Còn ${item.stock} chiếc`;
+    badge.className   = `badge ${isOutOfStock ? "badge-out-of-stock" : "badge-in-stock"}`;
+    document.getElementById("carDetailSKU").textContent = "SKU: " + generateSKU(item.brand, item.modelName, item.color, item.packaging);
 
-  // Stats
-  document.getElementById("carDetailAvgCost").textContent    = formatCurrency(item.avgCost);
-  document.getElementById("carDetailTotalCost").textContent  = formatCurrency(item.totalBuyCost);
-  document.getElementById("carDetailTotalBought").textContent = item.totalBought + " chiếc";
-  document.getElementById("carDetailStock").textContent      = item.stock + " chiếc";
-  document.getElementById("carDetailTotalSold").textContent  = item.totalSold + " chiếc";
-  document.getElementById("carDetailRevenue").textContent    = formatCurrency(item.totalRevenue);
-  document.getElementById("carDetailBreakEven").textContent  = formatCurrency(item.breakEvenPrice);
-  document.getElementById("carDetailTargetPrice").textContent = formatCurrency(targetPrice);
+    // Stats
+    document.getElementById("carDetailAvgCost").textContent    = formatCurrency(item.avgCost);
+    document.getElementById("carDetailTotalCost").textContent  = formatCurrency(item.totalBuyCost);
+    document.getElementById("carDetailTotalBought").textContent = item.totalBought + " chiếc";
+    document.getElementById("carDetailStock").textContent      = item.stock + " chiếc";
+    document.getElementById("carDetailTotalSold").textContent  = item.totalSold + " chiếc";
+    document.getElementById("carDetailRevenue").textContent    = formatCurrency(item.totalRevenue);
+    document.getElementById("carDetailBreakEven").textContent  = formatCurrency(item.breakEvenPrice);
+    document.getElementById("carDetailTargetPrice").textContent = formatCurrency(targetPrice);
 
-  // Lợi nhuận
-  const profitEl = document.getElementById("carDetailProfit");
-  const roiEl    = document.getElementById("carDetailROI");
-  profitEl.textContent = formatCurrency(item.realizedProfit);
-  profitEl.className   = item.realizedProfit >= 0 ? "text-green" : "text-danger";
-  roiEl.textContent    = item.roi.toFixed(1) + "%";
-  roiEl.className      = item.roi >= 0 ? "text-green" : "text-danger";
+    // Lợi nhuận
+    const profitEl = document.getElementById("carDetailProfit");
+    const roiEl    = document.getElementById("carDetailROI");
+    profitEl.textContent = formatCurrency(item.realizedProfit);
+    profitEl.className   = item.realizedProfit >= 0 ? "text-green" : "text-danger";
+    roiEl.textContent    = (item.roi || 0).toFixed(1) + "%";
+    roiEl.className      = item.roi >= 0 ? "text-green" : "text-danger";
 
-  // Lịch sử giao dịch
-  const txList = document.getElementById("carDetailTxList");
-  txList.innerHTML = "";
-  const txs = (state.transactions[state.activePortfolioId] || []).filter(tx =>
-    tx.modelName.trim().toLowerCase() === item.modelName.trim().toLowerCase() &&
-    tx.brand.trim().toLowerCase()     === item.brand.trim().toLowerCase()     &&
-    (tx.color || "").trim().toLowerCase()     === (item.color || "").trim().toLowerCase()  &&
-    (tx.packaging || "").trim().toLowerCase() === (item.packaging || "").trim().toLowerCase()
-  ).sort((a, b) => new Date(b.date) - new Date(a.date));
+    // Lịch sử giao dịch
+    const txList = document.getElementById("carDetailTxList");
+    txList.innerHTML = "";
+    const txs = (state.transactions[state.activePortfolioId] || []).filter(tx =>
+      tx.modelName.trim().toLowerCase() === item.modelName.trim().toLowerCase() &&
+      tx.brand.trim().toLowerCase()     === item.brand.trim().toLowerCase()     &&
+      (tx.color || "").trim().toLowerCase()     === (item.color || "").trim().toLowerCase()  &&
+      (tx.packaging || "").trim().toLowerCase() === (item.packaging || "").trim().toLowerCase()
+    ).sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  if (txs.length === 0) {
-    txList.innerHTML = `<div class="text-muted" style="font-size:13px;text-align:center;padding:12px;">Chưa có giao dịch nào.</div>`;
-  } else {
-    txs.forEach(tx => {
-      const isBuy  = tx.type === "buy";
-      const isRet  = tx.type === "return_buy" || tx.type === "return_sell";
-      const price  = (isBuy || tx.type === "return_buy") ? Number(tx.unitCost) : Number(tx.unitPrice);
-      const isShopee = tx.type === "sell" && tx.channel === "Shopee" && tx.taxUnitPrice;
-      const displayPrice = isShopee ? Number(tx.taxUnitPrice) : price;
-      const total  = tx.qty * displayPrice;
+    if (txs.length === 0) {
+      txList.innerHTML = `<div class="text-muted" style="font-size:13px;text-align:center;padding:12px;">Chưa có giao dịch nào.</div>`;
+    } else {
+      txs.forEach(tx => {
+        const isBuy  = tx.type === "buy";
+        const isRet  = tx.type === "return_buy" || tx.type === "return_sell";
+        const price  = (isBuy || tx.type === "return_buy") ? Number(tx.unitCost) : Number(tx.unitPrice);
+        const isShopee = tx.type === "sell" && tx.channel === "Shopee" && tx.taxUnitPrice;
+        const displayPrice = isShopee ? Number(tx.taxUnitPrice) : price;
+        const total  = tx.qty * displayPrice;
 
-      let typeCls = "badge-sell";
-      let typeLabel = "BÁN";
-      if (isBuy)  { typeCls = "badge-buy";    typeLabel = "MUA";  }
-      if (isRet)  { typeCls = "badge-return";  typeLabel = "HOÀN"; }
+        let typeCls = "badge-sell";
+        let typeLabel = "BÁN";
+        if (isBuy)  { typeCls = "badge-buy";    typeLabel = "MUA";  }
+        if (isRet)  { typeCls = "badge-return";  typeLabel = "HOÀN"; }
 
-      const channelTag = tx.channel ? `<span style="font-size:10px;color:var(--text-muted);">${tx.channel}</span>` : "";
+        const channelTag = tx.channel ? `<span style="font-size:10px;color:var(--text-muted);">${tx.channel}</span>` : "";
 
-      const el = document.createElement("div");
-      el.className = "car-detail-tx-item";
-      el.innerHTML = `
-        <div style="display:flex;flex-direction:column;gap:3px;flex:1;min-width:0;">
-          <div style="display:flex;align-items:center;gap:6px;">
-            <span class="badge ${typeCls}" style="font-size:10px;">${typeLabel}</span>
-            <span style="font-size:12px;color:var(--text-muted);">${formatDate(tx.date)}</span>
-            ${channelTag}
+        const el = document.createElement("div");
+        el.className = "car-detail-tx-item";
+        el.innerHTML = `
+          <div style="display:flex;flex-direction:column;gap:3px;flex:1;min-width:0;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span class="badge ${typeCls}" style="font-size:10px;">${typeLabel}</span>
+              <span style="font-size:12px;color:var(--text-muted);">${formatDate(tx.date)}</span>
+              ${channelTag}
+            </div>
+            <span style="font-size:12px;">SL: <strong>${tx.qty}</strong> × ${formatCurrency(displayPrice)}</span>
+            ${tx.notes ? `<span style="font-size:11px;color:var(--text-muted);">${tx.notes}</span>` : ""}
           </div>
-          <span style="font-size:12px;">SL: <strong>${tx.qty}</strong> × ${formatCurrency(displayPrice)}</span>
-          ${tx.notes ? `<span style="font-size:11px;color:var(--text-muted);">${tx.notes}</span>` : ""}
-        </div>
-        <div style="text-align:right;white-space:nowrap;">
-          <span style="font-size:13px;font-weight:600;">${formatCurrency(total)}</span>
-        </div>`;
-      txList.appendChild(el);
-    });
-  }
+          <div style="text-align:right;white-space:nowrap;">
+            <span style="font-size:13px;font-weight:600;">${formatCurrency(total)}</span>
+          </div>`;
+        txList.appendChild(el);
+      });
+    }
 
-  // Nút bán nhanh
-  const footer = document.getElementById("carDetailFooter");
-  if (!isOutOfStock) {
-    footer.innerHTML = `
-      <button class="btn btn-orange" style="width:100%;margin-top:4px;" onclick="closeCarDetailModal();quickSellCar('${item.modelName.replace(/'/g,"\\'")}','${item.brand.replace(/'/g,"\\'")}','${(item.color||"").replace(/'/g,"\\'")}','${(item.packaging||"").replace(/'/g,"\\'")}')">
-        <i data-lucide="shopping-bag" style="width:14px;height:14px;"></i> Bán xe nhanh
-      </button>`;
-  } else {
-    footer.innerHTML = "";
-  }
+    // Nút bán nhanh
+    const footer = document.getElementById("carDetailFooter");
+    if (!isOutOfStock) {
+      // Dùng SVG trực tiếp thay vì <i> để tránh phụ thuộc vào lucide.createIcons ở lần chạy thứ 2
+      footer.innerHTML = `
+        <button class="btn btn-orange" style="width:100%;margin-top:4px;display:flex;align-items:center;justify-content:center;gap:6px;" onclick="closeCarDetailModal();quickSellCar('${item.modelName.replace(/'/g,"\\'")}','${item.brand.replace(/'/g,"\\'")}','${(item.color||"").replace(/'/g,"\\'")}','${(item.packaging||"").replace(/'/g,"\\'")}')">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg> 
+          Bán xe nhanh
+        </button>`;
+    } else {
+      footer.innerHTML = "";
+    }
 
-  modal.classList.remove("hidden");
-  document.body.style.overflow = "hidden";
-  if (window.lucide) lucide.createIcons();
+    modal.classList.remove("hidden");
+    document.body.style.overflow = "hidden";
+  } catch (error) {
+    console.error("Lỗi khi mở Car Detail Modal:", error);
+    alert("Có lỗi khi hiển thị thông tin xe, vui lòng tải lại trang.");
+  }
 }
 
 function closeCarDetailModal() {
