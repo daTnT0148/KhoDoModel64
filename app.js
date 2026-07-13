@@ -6111,11 +6111,10 @@ function openCarDetailModal(item, targetPrice) {
 
     // Hình ảnh
     const visual = document.getElementById("carDetailVisual");
-    document.getElementById("carDetailBrandOverlay").textContent = item.brand;
     if (imgPath) {
-      visual.innerHTML = `<img src="${imgPath}" alt="${item.modelName}" style="width:100%;height:100%;object-fit:cover;border-radius:12px;" onerror="this.outerHTML='<span style=\\'font-size:48px;\\'>🚗</span>'"><div class="brand-overlay">${item.brand}</div>`;
+      visual.innerHTML = `<img src="${imgPath}" alt="${item.modelName}" style="width:100%;height:100%;object-fit:cover;border-radius:12px;" onerror="this.outerHTML='<span style=\\'font-size:48px;\\'>🚗</span>'"><div class="brand-overlay" id="carDetailBrandOverlay">${item.brand}</div>`;
     } else {
-      visual.innerHTML = `<span style="font-size:48px;">🚗</span><div class="brand-overlay">${item.brand}</div>`;
+      visual.innerHTML = `<span style="font-size:48px;">🚗</span><div class="brand-overlay" id="carDetailBrandOverlay">${item.brand}</div>`;
     }
 
     // Badge trạng thái
