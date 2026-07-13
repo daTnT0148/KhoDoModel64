@@ -3413,6 +3413,11 @@ function setupCsvImport() {
 
 // --- THIẾT LẬP CÁC NÚT HỆ THỐNG TRONG CÀI ĐẶT ---
 function setupSystemSettings() {
+  // Hiển thị version từ version.js vào card Cài đặt
+  const versionEl = document.getElementById('appVersionDisplay');
+  if (versionEl) {
+    versionEl.textContent = 'v' + (window.APP_VERSION || 'unknown');
+  }
   const loadMockBtn = document.getElementById("loadMockDataBtn");
   const clearDataBtn = document.getElementById("clearAllDataBtn");
   const currencySelect = document.getElementById("currencySelect");

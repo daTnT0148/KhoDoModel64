@@ -22,7 +22,18 @@
   <!-- Chart.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <!-- Custom Styling -->
-  <link rel="stylesheet" href="style.css">
+  <!-- Version: load trước để APP_VERSION có sẵn cho mọi asset sau -->
+  <script src="version.js"></script>
+  <!-- style.css được inject qua JS với ?v= để chống cache -->
+  <script>
+    (function() {
+      var v = (window.APP_VERSION || Date.now());
+      var css = document.createElement("link");
+      css.rel = "stylesheet";
+      css.href = "style.css?v=" + v;
+      document.head.appendChild(css);
+    })();
+  </script>
   <style>
     @media print {
       /* Ẩn toàn bộ giao diện ứng dụng */
@@ -965,11 +976,30 @@
               </div>
             </div>
 
+            <!-- Version info -->
+            <div class="settings-card settings-card-full" style="margin-top: 8px;">
+              <h3><i data-lucide="info"></i> Phiên bản ứng dụng</h3>
+              <p class="settings-desc">
+                <strong>Version:</strong>
+                <code id="appVersionDisplay" style="
+                  background: rgba(99,102,241,0.12);
+                  border: 1px solid rgba(99,102,241,0.3);
+                  border-radius: 4px;
+                  padding: 2px 8px;
+                  font-size: 13px;
+                  color: var(--primary);
+                  margin-left: 8px;
+                  font-family: monospace;
+                ">—</code>
+              </p>
+              <p class="settings-desc" style="margin-top: 4px; font-size: 12px; color: var(--text-muted);">
+                Nếu app không cập nhật sau khi deploy, hãy tắt hẳn trình duyệt và mở lại.
+              </p>
+            </div>
+
           </div>
 
         </section>
-
-        <!-- ================= PANEL: TAX INFO ================= -->
         <section class="panel" id="panel-tax-info">
           <div class="settings-grid">
             <div class="settings-card settings-card-full">
@@ -1253,11 +1283,17 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
-  <!-- Main JavaScript File -->
-  <script src="mock_db.js"></script>
-  <script src="env.js"></script>
-  <script src="db.js"></script>
-  <script src="app.js"></script>
+  <!-- Versioned JS: APP_VERSION từ version.js (đã load trong <head>) được gắn vào URL
+       để chống cache. Dùng document.write để giữ đúng thứ tự tải đồng bộ như script tags gốc. -->
+  <script>
+    (function() {
+      var v = window.APP_VERSION || '0';
+      document.write('<script src="mock_db.js?v=' + v + '"><\/script>');
+      document.write('<script src="env.js?v=' + v + '"><\/script>');
+      document.write('<script src="db.js?v=' + v + '"><\/script>');
+      document.write('<script src="app.js?v=' + v + '"><\/script>');
+    })();
+  </script>
   <!-- Image Lightbox -->
   <div id="imgLightbox" class="img-lightbox hidden" onclick="closeImgLightbox()">
     <div class="img-lightbox-inner" onclick="event.stopPropagation()">
