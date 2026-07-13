@@ -1,0 +1,75 @@
+name: Auto Version & Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write   # cần để commit version.js ngược lại repo
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout code
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. Tự động tạo version string từ ngày giờ UTC + run number
+      #    Format: YYYY.MM.DD-RR  (RR = run number trong ngày, đảm bảo unique)
+      - name: Generate version string
+        id: version
+        run: |
+          VERSION=$(date -u +'%Y.%m.%d')-$(printf '%02d' ${{ github.run_number }})
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Generated version: $VERSION"
+
+      # 3. Ghi version vào version.js
+      - name: Update version.js
+        run: |
+          echo "window.APP_VERSION = \"${{ steps.version.outputs.VERSION }}\";" > version.js
+          echo "Updated version.js to: ${{ steps.version.outputs.VERSION }}"
+
+      # 4. Ghi CACHE_VERSION vào service-worker.js
+      - name: Update service-worker.js cache version
+        run: |
+          sed -i "s/const CACHE_VERSION = 'mh64-[^']*'/const CACHE_VERSION = 'mh64-${{ steps.version.outputs.VERSION }}'/" service-worker.js
+          echo "Updated service-worker.js CACHE_VERSION"
+          grep "CACHE_VERSION" service-worker.js
+
+      # 5. Commit version files nếu có thay đổi
+      - name: Commit updated version files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add version.js service-worker.js
+          git diff --staged --quiet || git commit -m "chore: bump version to ${{ steps.version.outputs.VERSION }} [skip ci]"
+          git push
+
+      # 6. Setup GitHub Pages
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      # 7. Upload toàn bộ thư mục gốc lên Pages
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'   # upload toàn bộ repo root
+
+      # 8. Deploy lên GitHub Pages
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      # 9. In URL sau khi deploy xong
+      - name: Print deployed URL
+        run: |
+          echo "✅ Deployed version ${{ steps.version.outputs.VERSION }}"
+          echo "🔗 URL: ${{ steps.deployment.outputs.page_url }}"

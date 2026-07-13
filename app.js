@@ -1230,7 +1230,7 @@ function renderInventoryTable(inventory) {
           </span>
           <div class="sku-inline">
             <span class="badge-sku">SKU: ${generateSKU(item.brand, item.modelName, item.color, item.packaging)}</span>
-            <button class="sku-copy-btn" onclick="window.copySKU(event, '${generateSKU(item.brand, item.modelName, item.color, item.packaging)}')"><i data-lucide="copy" style="width:12px;height:12px;"></i></button>
+            <button class="sku-copy-btn" onclick="event.stopPropagation();window.copySKU(event, '${generateSKU(item.brand, item.modelName, item.color, item.packaging)}')"><i data-lucide="copy" style="width:12px;height:12px;"></i></button>
           </div>
         </div>
         <span class="badge ${isOutOfStock ? 'badge-out-of-stock' : 'badge-in-stock'}">
@@ -1238,7 +1238,7 @@ function renderInventoryTable(inventory) {
         </span>
       </div>
 
-      <div class="car-card-visual" style="cursor:pointer;" onclick="${imgPath ? `openImgLightbox('${imgPath}','${item.modelName.replace(/'/g,"\\'")}')` : 'void(0)'}">
+      <div class="car-card-visual" style="cursor:pointer;" onclick="event.stopPropagation();${imgPath ? `openImgLightbox('${imgPath}','${item.modelName.replace(/'/g,"\\'")}')` : 'void(0)'}">
         ${imgPath
           ? `<img src="${imgPath}" alt="${item.modelName}" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" onerror="this.outerHTML='🚗'">`
           : '🚗'}
@@ -1280,18 +1280,28 @@ function renderInventoryTable(inventory) {
           </span>
         </div>
         ${!isOutOfStock 
-          ? `<button class="btn btn-orange btn-sm" onclick="quickSellCar('${item.modelName.replace(/'/g,"\\'")}', '${item.brand.replace(/'/g,"\\'")}', '${(item.color || "").replace(/'/g,"\\'")}', '${(item.packaging || "").replace(/'/g,"\\'")}')">
+          ? `<button class="btn btn-orange btn-sm" onclick="event.stopPropagation();quickSellCar('${item.modelName.replace(/'/g,"\\'")}', '${item.brand.replace(/'/g,"\\'")}', '${(item.color || "").replace(/'/g,"\\'")}', '${(item.packaging || "").replace(/'/g,"\\'")}')">
               <i data-lucide="shopping-bag" style="width:12px; height:12px;"></i> Bán xe
              </button>`
           : ""
         }
       </div>
     `;
+
+    // Trên mobile: bấm vào card mở modal chi tiết
+    card.addEventListener("click", (e) => {
+      if (e.target.closest("button") || e.target.closest(".car-card-visual")) return;
+      if (window.innerWidth <= 768) {
+        openCarDetailModal(item, targetPrice);
+      }
+    });
+
     gridContainer.appendChild(card);
   });
 
   lucide.createIcons();
 }
+
 
 // Nạp động danh sách các năm có giao dịch vào dropdown "Năm" (giữ lại lựa chọn hiện tại nếu còn hợp lệ)
 function populateHistoryYearFilter(txs, currentValue) {
@@ -6070,3 +6080,121 @@ window.addEventListener("DOMContentLoaded", async () => {
 window.addEventListener("load", () => {
   if (window.lucide) lucide.createIcons();
 });
+
+// ─── MOBILE: Mở Modal Chi tiết Xe ──────────────────────────────────────────
+
+function openCarDetailModal(item, targetPrice) {
+  const modal = document.getElementById("carDetailModal");
+  if (!modal) return;
+
+  const isOutOfStock = item.stock === 0;
+  const imgKey  = buildCarImageKey(item.modelName, item.brand, item.color, item.packaging);
+  const imgPath = getCarImage(imgKey);
+
+  // Header
+  document.getElementById("carDetailModelName").textContent = item.modelName;
+  document.getElementById("carDetailSubtitle").textContent  =
+    [item.brand, item.color ? `Màu: ${item.color}` : "", item.packaging ? `Gói: ${item.packaging}` : ""]
+      .filter(Boolean).join(" · ");
+
+  // Hình ảnh
+  const visual = document.getElementById("carDetailVisual");
+  document.getElementById("carDetailBrandOverlay").textContent = item.brand;
+  if (imgPath) {
+    visual.innerHTML = `<img src="${imgPath}" alt="${item.modelName}" style="width:100%;height:100%;object-fit:cover;border-radius:12px;" onerror="this.outerHTML='<span style=\\'font-size:48px;\\'>🚗</span>'"><div class="brand-overlay">${item.brand}</div>`;
+  } else {
+    visual.innerHTML = `<span style="font-size:48px;">🚗</span><div class="brand-overlay">${item.brand}</div>`;
+  }
+
+  // Badge trạng thái
+  const badge = document.getElementById("carDetailStockBadge");
+  badge.textContent = isOutOfStock ? "Hết hàng" : `Còn ${item.stock} chiếc`;
+  badge.className   = `badge ${isOutOfStock ? "badge-out-of-stock" : "badge-in-stock"}`;
+  document.getElementById("carDetailSKU").textContent = "SKU: " + generateSKU(item.brand, item.modelName, item.color, item.packaging);
+
+  // Stats
+  document.getElementById("carDetailAvgCost").textContent    = formatCurrency(item.avgCost);
+  document.getElementById("carDetailTotalCost").textContent  = formatCurrency(item.totalBuyCost);
+  document.getElementById("carDetailTotalBought").textContent = item.totalBought + " chiếc";
+  document.getElementById("carDetailStock").textContent      = item.stock + " chiếc";
+  document.getElementById("carDetailTotalSold").textContent  = item.totalSold + " chiếc";
+  document.getElementById("carDetailRevenue").textContent    = formatCurrency(item.totalRevenue);
+  document.getElementById("carDetailBreakEven").textContent  = formatCurrency(item.breakEvenPrice);
+  document.getElementById("carDetailTargetPrice").textContent = formatCurrency(targetPrice);
+
+  // Lợi nhuận
+  const profitEl = document.getElementById("carDetailProfit");
+  const roiEl    = document.getElementById("carDetailROI");
+  profitEl.textContent = formatCurrency(item.realizedProfit);
+  profitEl.className   = item.realizedProfit >= 0 ? "text-green" : "text-danger";
+  roiEl.textContent    = item.roi.toFixed(1) + "%";
+  roiEl.className      = item.roi >= 0 ? "text-green" : "text-danger";
+
+  // Lịch sử giao dịch
+  const txList = document.getElementById("carDetailTxList");
+  txList.innerHTML = "";
+  const txs = (state.transactions[state.activePortfolioId] || []).filter(tx =>
+    tx.modelName.trim().toLowerCase() === item.modelName.trim().toLowerCase() &&
+    tx.brand.trim().toLowerCase()     === item.brand.trim().toLowerCase()     &&
+    (tx.color || "").trim().toLowerCase()     === (item.color || "").trim().toLowerCase()  &&
+    (tx.packaging || "").trim().toLowerCase() === (item.packaging || "").trim().toLowerCase()
+  ).sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  if (txs.length === 0) {
+    txList.innerHTML = `<div class="text-muted" style="font-size:13px;text-align:center;padding:12px;">Chưa có giao dịch nào.</div>`;
+  } else {
+    txs.forEach(tx => {
+      const isBuy  = tx.type === "buy";
+      const isRet  = tx.type === "return_buy" || tx.type === "return_sell";
+      const price  = (isBuy || tx.type === "return_buy") ? Number(tx.unitCost) : Number(tx.unitPrice);
+      const isShopee = tx.type === "sell" && tx.channel === "Shopee" && tx.taxUnitPrice;
+      const displayPrice = isShopee ? Number(tx.taxUnitPrice) : price;
+      const total  = tx.qty * displayPrice;
+
+      let typeCls = "badge-sell";
+      let typeLabel = "BÁN";
+      if (isBuy)  { typeCls = "badge-buy";    typeLabel = "MUA";  }
+      if (isRet)  { typeCls = "badge-return";  typeLabel = "HOÀN"; }
+
+      const channelTag = tx.channel ? `<span style="font-size:10px;color:var(--text-muted);">${tx.channel}</span>` : "";
+
+      const el = document.createElement("div");
+      el.className = "car-detail-tx-item";
+      el.innerHTML = `
+        <div style="display:flex;flex-direction:column;gap:3px;flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span class="badge ${typeCls}" style="font-size:10px;">${typeLabel}</span>
+            <span style="font-size:12px;color:var(--text-muted);">${formatDate(tx.date)}</span>
+            ${channelTag}
+          </div>
+          <span style="font-size:12px;">SL: <strong>${tx.qty}</strong> × ${formatCurrency(displayPrice)}</span>
+          ${tx.notes ? `<span style="font-size:11px;color:var(--text-muted);">${tx.notes}</span>` : ""}
+        </div>
+        <div style="text-align:right;white-space:nowrap;">
+          <span style="font-size:13px;font-weight:600;">${formatCurrency(total)}</span>
+        </div>`;
+      txList.appendChild(el);
+    });
+  }
+
+  // Nút bán nhanh
+  const footer = document.getElementById("carDetailFooter");
+  if (!isOutOfStock) {
+    footer.innerHTML = `
+      <button class="btn btn-orange" style="width:100%;margin-top:4px;" onclick="closeCarDetailModal();quickSellCar('${item.modelName.replace(/'/g,"\\'")}','${item.brand.replace(/'/g,"\\'")}','${(item.color||"").replace(/'/g,"\\'")}','${(item.packaging||"").replace(/'/g,"\\'")}')">
+        <i data-lucide="shopping-bag" style="width:14px;height:14px;"></i> Bán xe nhanh
+      </button>`;
+  } else {
+    footer.innerHTML = "";
+  }
+
+  modal.classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+  if (window.lucide) lucide.createIcons();
+}
+
+function closeCarDetailModal() {
+  const modal = document.getElementById("carDetailModal");
+  if (modal) modal.classList.add("hidden");
+  document.body.style.overflow = "";
+}
