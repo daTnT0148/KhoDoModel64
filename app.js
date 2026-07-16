@@ -3904,13 +3904,26 @@ function drawProfitTrendChart(portfolioId, inventoryList) {
 
   const txs = state.transactions[portfolioId] || [];
   
-  // TÍNH FIFO CHO CÁC GIAO DỊCH BÁN
+  // TÍNH FIFO CHO CÁC GIAO DỊCH BÁN — dùng returnedQtyMap để trừ đúng số lượng trả hàng
+  // giống calculateInventory, tránh fifoUnitCost = 0 khi khách trả rồi bán lại lần sau
+  const returnedMap4Chart = computeReturnedQtyMap(txs);
+
   const carMap = {};
   txs.forEach(tx => {
     const key = `${tx.modelName.trim().toLowerCase()}||${tx.brand.trim().toLowerCase()}||${(tx.color || "").trim().toLowerCase()}||${(tx.packaging || "").trim().toLowerCase()}`;
     if (!carMap[key]) carMap[key] = { buys: [], sells: [] };
-    if (tx.type === "buy")  carMap[key].buys.push({ ...tx, qty: Number(tx.qty), unitCost: Number(tx.unitCost) });
-    if (tx.type === "sell") carMap[key].sells.push({ ...tx, qty: Number(tx.qty), unitPrice: Number(tx.unitPrice) });
+    if (tx.type === "buy") {
+      // Trừ số lượng đã hoàn kho về NCC (return_buy có restockToInventory=true)
+      const restockReturned = returnedMap4Chart.restock[tx.id] || 0;
+      const effectiveQty = Math.max(0, Number(tx.qty) - restockReturned);
+      if (effectiveQty > 0) carMap[key].buys.push({ ...tx, qty: effectiveQty, unitCost: Number(tx.unitCost) });
+    }
+    if (tx.type === "sell") {
+      // Chỉ tính vào FIFO phần số lượng chưa được khách hoàn kho lại
+      const restockReturned = returnedMap4Chart.restock[tx.id] || 0;
+      const fifoQty = Math.max(0, Number(tx.qty) - restockReturned);
+      if (fifoQty > 0) carMap[key].sells.push({ ...tx, qty: fifoQty, unitPrice: Number(tx.unitPrice) });
+    }
   });
 
   const fifoSellCostMap = {};
@@ -3947,7 +3960,10 @@ function drawProfitTrendChart(portfolioId, inventoryList) {
 
   sells.forEach(tx => {
     const fifoUnitCost = fifoSellCostMap[tx.id] || 0;
-    const profit = Number(tx.qty) * (Number(tx.unitPrice) - fifoUnitCost);
+    // fifoQty: số lượng thực sự đã tiêu thụ sau khi trừ hoàn kho (cùng logic với carMap)
+    const restockReturned = returnedMap4Chart.restock[tx.id] || 0;
+    const fifoQty = Math.max(0, Number(tx.qty) - restockReturned);
+    const profit = fifoQty * (Number(tx.unitPrice) - fifoUnitCost);
     const dateObj = parseDMYToLocalDate(tx.date);
     dateObj.setHours(0, 0, 0, 0);
 

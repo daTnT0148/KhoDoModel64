@@ -3,7 +3,7 @@
 // Khi bạn bump APP_VERSION → service worker cũ bị xoá cache, client tải toàn bộ file mới.
 // Các request ?v=... (versioned URLs) được cache theo URL đầy đủ nên không bao giờ trả
 // bản cũ sai version — URL cũ và URL mới là 2 entry cache khác nhau.
-const CACHE_VERSION = 'mh64-2026.07.14-01'; // đồng bộ với APP_VERSION trong version.js
+const CACHE_VERSION = 'mh64-2026.07.16-01'; // đồng bộ với APP_VERSION trong version.js
 
 // version.js + index.html là 2 file không có query-string version → phải luôn fetch mới
 const ALWAYS_NETWORK = ['/version.js', './version.js', 'version.js'];
