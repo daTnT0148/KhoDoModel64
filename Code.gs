@@ -52,6 +52,7 @@ function doPost(e) {
       case "saveSettings":       result = saveSettings(body.data);       break;
       case "replaceTransactions":result = replaceTransactions(body.data);break;
       case "uploadImage":        result = uploadImage(body.data);        break;
+      case "syncCarImagesMappings":result = syncCarImagesMappings(body.data);break;
       case "writeTaxDeclaration":result = writeTaxDeclaration(body.data);break;
       case "scanSheet":          result = scanSheet(body.data);          break;
       default: result = { error: "Unknown action: " + action };
@@ -412,6 +413,34 @@ function ensureCarImagesColumns(sheet) {
   if (sheet.getLastRow() === 0) {
     sheet.appendRow(["imgKey", "url", "fileId"]);
     sheet.getRange(1, 1, 1, 3).setBackground("#1e293b").setFontColor("#ffffff").setFontWeight("bold");
+  }
+}
+
+function syncCarImagesMappings(data) {
+  if (!data || !Array.isArray(data)) return { error: "Invalid data" };
+  try {
+    const imgSheet = getSheet("CarImages");
+    ensureCarImagesColumns(imgSheet);
+    const sheetData = imgSheet.getDataRange().getValues();
+    const existingKeys = new Set();
+    for (let i = 1; i < sheetData.length; i++) {
+      existingKeys.add(String(sheetData[i][0]));
+    }
+    const newRows = [];
+    for (let i = 0; i < data.length; i++) {
+      if (data[i].imgKey && data[i].url && data[i].fileId) {
+        if (!existingKeys.has(String(data[i].imgKey))) {
+          newRows.push([data[i].imgKey, data[i].url, data[i].fileId]);
+          existingKeys.add(String(data[i].imgKey));
+        }
+      }
+    }
+    if (newRows.length > 0) {
+      imgSheet.getRange(imgSheet.getLastRow() + 1, 1, newRows.length, 3).setValues(newRows);
+    }
+    return { ok: true, synced: newRows.length };
+  } catch (err) {
+    return { error: "Sync failed: " + err.message };
   }
 }
 

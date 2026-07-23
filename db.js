@@ -309,6 +309,8 @@ function mergeStateFromCloud(cloudData) {
     try {
       const localImages = JSON.parse(localStorage.getItem("car_images") || "{}");
       let updated = false;
+      const missingInCloud = [];
+
       for (const [key, cloudVal] of Object.entries(cloudData.carImages)) {
         const localVal = localImages[key];
         // Merge cloud images (prefer cloud over local if there is a conflict)
@@ -321,8 +323,29 @@ function mergeStateFromCloud(cloudData) {
           updated = true;
         }
       }
+
+      // Phát hiện các ảnh cũ chỉ có ở Local mà chưa có trên Cloud Sheet
+      for (const [key, localVal] of Object.entries(localImages)) {
+        if (!cloudData.carImages[key] && typeof localVal === "object" && localVal.url && localVal.fileId) {
+          missingInCloud.push({ imgKey: key, url: localVal.url, fileId: localVal.fileId });
+        }
+      }
+
       if (updated) {
         localStorage.setItem("car_images", JSON.stringify(localImages));
+      }
+
+      // Tự động đẩy mapping cũ lên server 1 lần
+      if (missingInCloud.length > 0) {
+        fetch(APPS_SCRIPT_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: JSON.stringify({
+            action: "syncCarImagesMappings",
+            key: API_SECRET_KEY,
+            data: missingInCloud
+          })
+        }).catch(err => console.error("Auto sync old images failed", err));
       }
     } catch (e) { console.error("Error merging car images from cloud", e); }
   }
