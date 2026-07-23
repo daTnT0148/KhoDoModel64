@@ -2206,6 +2206,7 @@ body {
   justify-content: center;
   z-index: 1000;
   animation: fadeIn 0.2s ease-out;
+  overscroll-behavior: none;
 }
 
 .modal-backdrop.hidden {
@@ -3370,8 +3371,15 @@ img {
     position: fixed;
     bottom: 0;
     left: 0;
-    max-height: 90vh;
+    max-height: 85vh;
     overflow-y: auto;
+    overscroll-behavior: contain;
+    display: flex;
+    flex-direction: column;
+  }
+  
+  #carDetailModal .modal-card {
+    overflow: hidden; /* Let the inner sheet handle scroll */
   }
 
   .modal-card-large {
@@ -3446,8 +3454,11 @@ img {
   flex-direction: column;
   gap: 0;
   padding: 20px;
-  max-height: 92vh;
+  padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  flex: 1;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .car-detail-header {
