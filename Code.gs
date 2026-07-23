@@ -190,7 +190,17 @@ function getAllData() {
     pSheet.appendRow(["p-default", "Bo suu tap ca nhan"]);
   }
 
-  return { portfolios, transactions, currency, activePortfolioId: activePortfolio, feeSettings };
+  // Ảnh xe: đọc từ sheet CarImages để đồng bộ giữa các thiết bị
+  const carImages = {};
+  try {
+    const imgSheet = getSheet("CarImages");
+    const imgRows  = sheetToObjects(imgSheet);
+    imgRows.filter(r => r.imgKey).forEach(r => {
+      carImages[String(r.imgKey)] = { url: String(r.url || ""), fileId: String(r.fileId || "") };
+    });
+  } catch (e) { /* sheet chưa có thì bỏ qua */ }
+
+  return { portfolios, transactions, currency, activePortfolioId: activePortfolio, feeSettings, carImages };
 }
 
 // --- WRITE ---
@@ -372,9 +382,36 @@ function uploadImage(data) {
     const file = folder.createFile(blob);
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
     const fileId = file.getId();
-    return { ok: true, fileId, imageUrl: "https://lh3.googleusercontent.com/d/" + fileId, fileName: data.fileName };
+    const imageUrl = "https://lh3.googleusercontent.com/d/" + fileId;
+
+    // Lưu mapping key→url vào sheet CarImages để đồng bộ giữa các thiết bị
+    if (data.imgKey) {
+      try {
+        const imgSheet = getSheet("CarImages");
+        ensureCarImagesColumns(imgSheet);
+        const sheetData = imgSheet.getDataRange().getValues();
+        let found = false;
+        for (let i = 1; i < sheetData.length; i++) {
+          if (String(sheetData[i][0]) === String(data.imgKey)) {
+            imgSheet.getRange(i + 1, 1, 1, 3).setValues([[data.imgKey, imageUrl, fileId]]);
+            found = true;
+            break;
+          }
+        }
+        if (!found) imgSheet.appendRow([data.imgKey, imageUrl, fileId]);
+      } catch (e) { /* ghi sheet thất bại thì vẫn trả về url */ }
+    }
+
+    return { ok: true, fileId, imageUrl, fileName: data.fileName };
   } catch (err) {
     return { error: "Upload failed: " + err.message };
+  }
+}
+
+function ensureCarImagesColumns(sheet) {
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(["imgKey", "url", "fileId"]);
+    sheet.getRange(1, 1, 1, 3).setBackground("#1e293b").setFontColor("#ffffff").setFontWeight("bold");
   }
 }
 

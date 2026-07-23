@@ -3574,7 +3574,7 @@ async function changeCarImage(event, imgKey) {
   const oldFileId = typeof oldData === "object" ? oldData.fileId || "" : "";
 
   if (isCloudConfigured()) {
-    const result = await dbUploadImage(file, oldFileId);
+    const result = await dbUploadImage(file, oldFileId, imgKey);
     if (result && result.ok) {
       setCarImage(imgKey, { url: result.imageUrl, fileId: result.fileId });
       refreshApplicationData();
@@ -3627,7 +3627,7 @@ async function saveBuyFormImage(modelName, brand, color = "", packaging = "") {
     const oldData = getCarImages()[imgKey] || {};
     const oldFileId = typeof oldData === "object" ? oldData.fileId || "" : "";
 
-    const result = await dbUploadImage(file, oldFileId);
+    const result = await dbUploadImage(file, oldFileId, imgKey);
     if (result && result.ok) {
       setCarImage(imgKey, { url: result.imageUrl, fileId: result.fileId });
     }

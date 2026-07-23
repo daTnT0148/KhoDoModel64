@@ -303,6 +303,29 @@ function mergeStateFromCloud(cloudData) {
       state.activePortfolioId = cloudData.activePortfolioId;
     }
   }
+
+  // --- Car Images ---
+  if (cloudData.carImages) {
+    try {
+      const localImages = JSON.parse(localStorage.getItem("car_images") || "{}");
+      let updated = false;
+      for (const [key, cloudVal] of Object.entries(cloudData.carImages)) {
+        const localVal = localImages[key];
+        // Merge cloud images (prefer cloud over local if there is a conflict)
+        if (!localVal || (typeof cloudVal === "object" && typeof localVal === "object" && cloudVal.fileId !== localVal.fileId)) {
+          localImages[key] = cloudVal;
+          updated = true;
+        } else if (typeof localVal === "string") {
+          // Upgrade old string format to object format from cloud
+          localImages[key] = cloudVal;
+          updated = true;
+        }
+      }
+      if (updated) {
+        localStorage.setItem("car_images", JSON.stringify(localImages));
+      }
+    } catch (e) { console.error("Error merging car images from cloud", e); }
+  }
 }
 
 // ─── Load dữ liệu khi mở app ─────────────────────────────────────────────────
@@ -483,7 +506,7 @@ async function optimizeImage(file) {
  * @param {string} oldFileId - fileId cũ để xóa khi đổi ảnh (optional)
  * @returns {Promise<{ok, fileId, imageUrl, fileName} | null>}
  */
-async function dbUploadImage(file, oldFileId = "") {
+async function dbUploadImage(file, oldFileId = "", imgKey = "") {
   if (!isCloudConfigured()) return null;
 
   showSyncStatus("syncing", "Đang tối ưu ảnh...");
@@ -517,7 +540,8 @@ async function dbUploadImage(file, oldFileId = "") {
               base64:    base64,
               mimeType:  "image/webp",
               fileName:  optimized.fileName,
-              oldFileId: oldFileId
+              oldFileId: oldFileId,
+              imgKey:    imgKey
             }
           })
         });
