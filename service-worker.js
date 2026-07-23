@@ -6,7 +6,7 @@
 <<<<<<< HEAD
 const CACHE_VERSION = 'v-2026.07.23-01'; // đồng bộ với APP_VERSION trong version.js
 =======
-const CACHE_VERSION = 'mh64-2026.07.16-05'; // đồng bộ với APP_VERSION trong version.js
+const CACHE_VERSION = 'mh64-2026.07.23-06'; // đồng bộ với APP_VERSION trong version.js
 >>>>>>> 0edf764165842fae0e01d426460f77ffec21f24f
 
 // version.js + index.html là 2 file không có query-string version → phải luôn fetch mới
