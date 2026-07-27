@@ -1280,83 +1280,85 @@
 
   <!-- Modal Chi tiết Xe (Mobile Detail Sheet) -->
   <div class="modal-backdrop hidden" id="carDetailModal" onclick="if(event.target===this)closeCarDetailModal()">
-    <div class="modal-card car-detail-sheet" id="carDetailSheet">
-      <div class="car-detail-header">
-        <div class="car-detail-title-wrap">
-          <h3 id="carDetailModelName">—</h3>
-          <p id="carDetailSubtitle" style="font-size:12px;color:var(--text-muted);margin-top:2px;"></p>
+    <div class="modal-card" id="carDetailSheet">
+      <div class="car-detail-sheet">
+        <div class="car-detail-header">
+          <div class="car-detail-title-wrap">
+            <h3 id="carDetailModelName">—</h3>
+            <p id="carDetailSubtitle" style="font-size:12px;color:var(--text-muted);margin-top:2px;"></p>
+          </div>
+          <button class="modal-close-btn" onclick="closeCarDetailModal()" aria-label="Đóng" style="font-size:24px;line-height:1;">&times;</button>
         </div>
-        <button class="modal-close-btn" onclick="closeCarDetailModal()" aria-label="Đóng" style="font-size:24px;line-height:1;">&times;</button>
-      </div>
 
-      <!-- Hình ảnh xe -->
-      <div class="car-detail-visual" id="carDetailVisual">
-        <span style="font-size:48px;">🚗</span>
-        <div class="brand-overlay" id="carDetailBrandOverlay"></div>
-      </div>
+        <!-- Hình ảnh xe -->
+        <div class="car-detail-visual" id="carDetailVisual">
+          <span style="font-size:48px;">🚗</span>
+          <div class="brand-overlay" id="carDetailBrandOverlay"></div>
+        </div>
 
-      <!-- Badge trạng thái + SKU -->
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:6px;">
-        <span class="badge" id="carDetailStockBadge" style="font-size:13px;padding:5px 10px;"></span>
-        <span id="carDetailSKU" style="font-family:monospace;font-size:11px;color:var(--text-muted);"></span>
-      </div>
+        <!-- Badge trạng thái + SKU -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:6px;">
+          <span class="badge" id="carDetailStockBadge" style="font-size:13px;padding:5px 10px;"></span>
+          <span id="carDetailSKU" style="font-family:monospace;font-size:11px;color:var(--text-muted);"></span>
+        </div>
 
-      <!-- Thống kê dạng lưới 2 cột -->
-      <div class="car-detail-stats-grid">
-        <div class="car-detail-stat">
-          <span class="stat-label">Giá mua TB</span>
-          <span class="stat-value" id="carDetailAvgCost">—</span>
+        <!-- Thống kê dạng lưới 2 cột -->
+        <div class="car-detail-stats-grid">
+          <div class="car-detail-stat">
+            <span class="stat-label">Giá mua TB</span>
+            <span class="stat-value" id="carDetailAvgCost">—</span>
+          </div>
+          <div class="car-detail-stat">
+            <span class="stat-label">Tổng đầu tư</span>
+            <span class="stat-value" id="carDetailTotalCost">—</span>
+          </div>
+          <div class="car-detail-stat">
+            <span class="stat-label">Tổng nhập</span>
+            <span class="stat-value" id="carDetailTotalBought">—</span>
+          </div>
+          <div class="car-detail-stat">
+            <span class="stat-label">Tồn kho</span>
+            <span class="stat-value" id="carDetailStock">—</span>
+          </div>
+          <div class="car-detail-stat">
+            <span class="stat-label">Đã bán</span>
+            <span class="stat-value text-orange" id="carDetailTotalSold">—</span>
+          </div>
+          <div class="car-detail-stat">
+            <span class="stat-label">Doanh thu</span>
+            <span class="stat-value text-green" id="carDetailRevenue">—</span>
+          </div>
+          <div class="car-detail-stat">
+            <span class="stat-label">🏷️ Hòa vốn Shopee</span>
+            <span class="stat-value text-orange" id="carDetailBreakEven">—</span>
+          </div>
+          <div class="car-detail-stat">
+            <span class="stat-label">🎯 Giá bán mục tiêu</span>
+            <span class="stat-value text-orange" id="carDetailTargetPrice">—</span>
+          </div>
         </div>
-        <div class="car-detail-stat">
-          <span class="stat-label">Tổng đầu tư</span>
-          <span class="stat-value" id="carDetailTotalCost">—</span>
-        </div>
-        <div class="car-detail-stat">
-          <span class="stat-label">Tổng nhập</span>
-          <span class="stat-value" id="carDetailTotalBought">—</span>
-        </div>
-        <div class="car-detail-stat">
-          <span class="stat-label">Tồn kho</span>
-          <span class="stat-value" id="carDetailStock">—</span>
-        </div>
-        <div class="car-detail-stat">
-          <span class="stat-label">Đã bán</span>
-          <span class="stat-value text-orange" id="carDetailTotalSold">—</span>
-        </div>
-        <div class="car-detail-stat">
-          <span class="stat-label">Doanh thu</span>
-          <span class="stat-value text-green" id="carDetailRevenue">—</span>
-        </div>
-        <div class="car-detail-stat">
-          <span class="stat-label">🏷️ Hòa vốn Shopee</span>
-          <span class="stat-value text-orange" id="carDetailBreakEven">—</span>
-        </div>
-        <div class="car-detail-stat">
-          <span class="stat-label">🎯 Giá bán mục tiêu</span>
-          <span class="stat-value text-orange" id="carDetailTargetPrice">—</span>
-        </div>
-      </div>
 
-      <!-- Lợi nhuận nổi bật -->
-      <div class="car-detail-profit-row">
-        <div>
-          <span style="font-size:12px;color:var(--text-muted);">Lợi nhuận ròng</span>
-          <div style="font-size:20px;font-weight:700;" id="carDetailProfit">—</div>
+        <!-- Lợi nhuận nổi bật -->
+        <div class="car-detail-profit-row">
+          <div>
+            <span style="font-size:12px;color:var(--text-muted);">Lợi nhuận ròng</span>
+            <div style="font-size:20px;font-weight:700;" id="carDetailProfit">—</div>
+          </div>
+          <div style="text-align:right;">
+            <span style="font-size:12px;color:var(--text-muted);">ROI</span>
+            <div style="font-size:20px;font-weight:700;" id="carDetailROI">—</div>
+          </div>
         </div>
-        <div style="text-align:right;">
-          <span style="font-size:12px;color:var(--text-muted);">ROI</span>
-          <div style="font-size:20px;font-weight:700;" id="carDetailROI">—</div>
+
+        <!-- Lịch sử giao dịch -->
+        <div style="margin-top:16px;">
+          <h4 style="font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">Lịch sử giao dịch</h4>
+          <div id="carDetailTxList" style="display:flex;flex-direction:column;gap:8px;"></div>
         </div>
-      </div>
 
-      <!-- Lịch sử giao dịch -->
-      <div style="margin-top:16px;">
-        <h4 style="font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">Lịch sử giao dịch</h4>
-        <div id="carDetailTxList" style="display:flex;flex-direction:column;gap:8px;"></div>
+        <!-- Nút bán nhanh -->
+        <div class="car-detail-footer" id="carDetailFooter"></div>
       </div>
-
-      <!-- Nút bán nhanh -->
-      <div class="car-detail-footer" id="carDetailFooter"></div>
     </div>
   </div>
 

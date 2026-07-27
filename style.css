@@ -3379,7 +3379,10 @@ img {
   }
   
   #carDetailModal .modal-card {
-    overflow: hidden; /* Let the inner sheet handle scroll */
+    overflow: hidden; /* inner car-detail-sheet handles scroll */
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
   }
 
   .modal-card-large {
@@ -3456,6 +3459,7 @@ img {
   padding: 20px;
   padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
   flex: 1;
+  min-height: 0;          /* Bắt buộc để flex child có thể scroll */
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
