@@ -2634,7 +2634,7 @@ body {
 .img-preview-box img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   border-radius: var(--border-radius-sm);
 }
 
@@ -2668,7 +2668,7 @@ body {
 .inv-thumb img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .inv-thumb .thumb-placeholder {
@@ -3505,7 +3505,7 @@ img {
 .car-detail-visual img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   border-radius: var(--border-radius-md);
 }
 
@@ -3585,7 +3585,7 @@ img {
 .car-card-visual-img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   border-radius: var(--border-radius-md);
 }
 

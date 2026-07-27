@@ -479,7 +479,8 @@ function calculateInventory(portfolioId) {
       inventoryMap[key].sells.push({
         qty:       fifoQty,
         unitPrice: Number(tx.unitPrice),
-        date:      tx.date
+        date:      tx.date,
+        originalTx: tx // Lưu tham chiếu đến tx gốc để gán giá vốn
       });
       inventoryMap[key].totalRevenue += revenueQty * Number(tx.unitPrice);
     }
@@ -521,16 +522,23 @@ function calculateInventory(portfolioId) {
 
     for (const sell of sellsSorted) {
       let qtyToSell = sell.qty;
+      let sellTotalCOGS = 0; // Giá vốn của riêng lần bán này
 
       while (qtyToSell > 0 && lotIdx < lots.length) {
         const lot = lots[lotIdx];
         const take = Math.min(lot.remaining, qtyToSell);
 
         totalCOGS      += take * lot.unitCost;
+        sellTotalCOGS  += take * lot.unitCost;
         lot.remaining  -= take;
         qtyToSell      -= take;
 
         if (lot.remaining === 0) lotIdx++;
+      }
+      
+      // Tính giá vốn trung bình cho 1 chiếc của đơn bán này và lưu lại vào giao dịch gốc
+      if (sell.qty > 0 && sell.originalTx) {
+        sell.originalTx.fifoAvgCost = sellTotalCOGS / sell.qty;
       }
     }
 
@@ -583,6 +591,7 @@ function calculateInventory(portfolioId) {
       totalBought:    totalQtyBought,
       totalSold:      totalQtySold,
       avgCost:        avgCost,        // ← giá vốn TB của hàng TỒN (FIFO)
+      historicalAvgCost: totalQtyBought > 0 ? totalBuyCost / totalQtyBought : 0, // ← giá vốn TB lịch sử
       totalBuyCost:   totalBuyCost,   // ← tổng chi phí đã bỏ ra
       totalRevenue:   item.totalRevenue,
       realizedProfit: realizedProfit, // ← lợi nhuận theo FIFO (đã trừ khoản lỗ trả hàng nếu có)
@@ -1240,7 +1249,7 @@ function renderInventoryTable(inventory) {
 
       <div class="car-card-visual" style="cursor:pointer;">
         ${imgPath
-          ? `<img src="${imgPath}" alt="${item.modelName}" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" onerror="this.outerHTML='🚗'">`
+          ? `<img src="${imgPath}" alt="${item.modelName}" style="width:100%;height:100%;object-fit:contain;border-radius:8px;background:rgba(0,0,0,0.2);" onerror="this.outerHTML='🚗'">`
           : '🚗'}
         <div class="brand-overlay">${item.brand}</div>
       </div>
@@ -1358,11 +1367,8 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
   // Nạp động danh sách các năm có giao dịch vào dropdown "Năm"
   populateHistoryYearFilter(txs, filterYear);
 
-  // Tạo map giá trung bình để hiện lợi nhuận tạm tính cho từng đơn bán lẻ
-  const avgCostMap = {};
-  inventoryList.forEach(item => {
-    avgCostMap[`${item.modelName.toLowerCase()}||${item.brand.toLowerCase()}||${(item.color || "").toLowerCase()}||${(item.packaging || "").toLowerCase()}`] = item.avgCost;
-  });
+  // Không cần avgCostMap nữa vì đã tính chính xác fifoAvgCost cho từng đơn ở hàm calculateInventory
+  // Nhưng vẫn gọi calculateInventory 1 lần nếu cần để update fifoAvgCost (thường đã gọi ở refreshApplicationData)
 
   // Lọc theo loại
   if (filterType !== "all") {
@@ -1448,9 +1454,9 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
         </div>
       `;
     } else {
-      // Bán: Hiển thị kênh bán + Lợi nhuận của đơn bán này dựa trên giá mua trung bình
-      const key = `${tx.modelName.toLowerCase()}||${tx.brand.toLowerCase()}||${(tx.color || "").toLowerCase()}||${(tx.packaging || "").toLowerCase()}`;
-      const avgCost = avgCostMap[key] || 0;
+      // Bán: Hiển thị kênh bán + Lợi nhuận của đơn bán này dựa trên giá mua trung bình FIFO tại thời điểm bán
+      // fifoAvgCost được tính chính xác trong calculateInventory()
+      const avgCost = tx.fifoAvgCost || 0; 
       // Lợi nhuận thực tế luôn tính trên unitPrice thực nhận (không phải giá khai Shopee)
       const actualUnitPrice = Number(tx.unitPrice);
       const profitFromThisTx = Number(tx.qty) * (actualUnitPrice - avgCost);
@@ -1459,6 +1465,7 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
         <div style="display:flex; flex-direction:column;">
           <span class="badge badge-in-stock" style="align-self: flex-start; margin-bottom: 2px;">Kênh: ${tx.channel}</span>
           ${isShopee && tx.taxUnitPrice ? `<span style="font-size:10px;color:var(--text-muted);">Giá thực nhận: ${formatCurrency(actualUnitPrice)}</span>` : ''}
+          ${avgCost > 0 ? `<span style="font-size:10px;color:var(--text-muted);">Giá vốn (FIFO): ${formatCurrency(avgCost)}</span>` : ''}
           <span style="font-size:11px;" class="${profitFromThisTx >= 0 ? 'text-green' : 'text-danger'}">
             Lời: ${formatCurrency(profitFromThisTx)}
           </span>
@@ -6128,7 +6135,7 @@ function openCarDetailModal(item, targetPrice) {
     // Hình ảnh
     const visual = document.getElementById("carDetailVisual");
     if (imgPath) {
-      visual.innerHTML = `<img src="${imgPath}" alt="${item.modelName}" style="width:100%;height:100%;object-fit:cover;border-radius:12px;" onerror="this.outerHTML='<span style=\\'font-size:48px;\\'>🚗</span>'"><div class="brand-overlay" id="carDetailBrandOverlay">${item.brand}</div>`;
+      visual.innerHTML = `<img src="${imgPath}" alt="${item.modelName}" style="width:100%;height:100%;object-fit:contain;border-radius:12px;" onerror="this.outerHTML='<span style=\\'font-size:48px;\\'>🚗</span>'"><div class="brand-overlay" id="carDetailBrandOverlay">${item.brand}</div>`;
     } else {
       visual.innerHTML = `<span style="font-size:48px;">🚗</span><div class="brand-overlay" id="carDetailBrandOverlay">${item.brand}</div>`;
     }
