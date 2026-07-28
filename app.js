@@ -860,6 +860,11 @@ function renderTopModelsTable(inventory) {
     .filter(item => item.totalSold > 0)
     .sort((a, b) => b.realizedProfit - a.realizedProfit)
     .slice(0, 5); // Lấy top 5
+    
+  if (window.innerWidth <= 768) {
+    renderMobileTopModels(topModels);
+    return;
+  }
 
   if (topModels.length === 0) {
     tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted">Chưa có giao dịch bán nào được ghi nhận để tính lợi nhuận.</td></tr>`;
@@ -934,6 +939,11 @@ function renderSlowModelsTable(inventory) {
       b.daysInStock !== a.daysInStock ? b.daysInStock - a.daysInStock :
       b.stockValue - a.stockValue
     );
+    
+  if (window.innerWidth <= 768) {
+    renderMobileSlowModels(slowModels);
+    return;
+  }
 
   if (slowModels.length === 0) {
     tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted" style="padding:20px 0;">Kh\u00f4ng c\u00f3 xe n\u00e0o \u0111ang t\u1ed3n kho.</td></tr>`;
@@ -1390,6 +1400,11 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
     const diff = new Date(a.date) - new Date(b.date);
     return sortOrder === "asc" ? diff : -diff;
   });
+
+  if (window.innerWidth <= 768) {
+    renderMobileTransactionHistory(sortedTxs, null);
+    return;
+  }
 
   if (sortedTxs.length === 0) {
     tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted" style="padding: 30px 0;">Chưa ghi nhận giao dịch nào.</td></tr>`;
@@ -6236,4 +6251,193 @@ function closeCarDetailModal() {
   const modal = document.getElementById("carDetailModal");
   if (modal) modal.classList.add("hidden");
   document.body.style.overflow = "";
+}
+
+// MOBILE CARDS RENDER FUNCTIONS
+function renderMobileTopModels(topModels) {
+  const container = document.getElementById('topModelsMobileContainer');
+  if (!container) return;
+  container.innerHTML = '';
+  
+  if (topModels.length === 0) {
+    container.innerHTML = '<div class="text-center text-muted" style="padding: 20px;">Chưa có giao dịch bán nào được ghi nhận.</div>';
+    return;
+  }
+  
+  topModels.forEach((item, index) => {
+    let medal = '';
+    if (index === 0) medal = '🥇 ';
+    else if (index === 1) medal = '🥈 ';
+    else if (index === 2) medal = '🥉 ';
+    else medal = '#' + (index + 1) + ' ';
+    
+    const card = document.createElement('div');
+    card.className = 'mobile-card';
+    card.onclick = () => {
+      const { fee = 25, extra = 4620, operation = 5000, targetProfitRate = 20 } = window.state?.feeSettings || {};
+      const denominator = 1 - (fee / 100) - (targetProfitRate / 100);
+      const targetPrice = denominator > 0 ? ((item.avgCost || 0) + extra + operation) / denominator : 0;
+      openCarDetailModal(item, targetPrice);
+    };
+    
+    card.innerHTML = `
+      <div class="mobile-card-header">
+        <div class="mobile-card-title">${medal}${item.modelName}</div>
+        <div class="mobile-card-badge"><span class="badge" style="background:var(--bg-lighter);">${item.brand}</span></div>
+      </div>
+      <div class="mobile-card-stats">
+        <div class="mobile-stat-item">
+          <span class="mobile-stat-label">Đã bán</span>
+          <span class="mobile-stat-value">${item.totalSold} chiếc</span>
+        </div>
+        <div class="mobile-stat-item">
+          <span class="mobile-stat-label">ROI</span>
+          <span class="mobile-stat-value" style="color:var(--primary);">${item.roi.toFixed(1)}%</span>
+        </div>
+        <div class="mobile-stat-item" style="flex: 1 1 100%;">
+          <span class="mobile-stat-label">Lợi nhuận</span>
+          <span class="mobile-stat-value text-green">${formatCurrency(item.realizedProfit)}</span>
+        </div>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+function renderMobileSlowModels(slowModels) {
+  const container = document.getElementById('slowModelsMobileContainer');
+  if (!container) return;
+  container.innerHTML = '';
+  
+  if (slowModels.length === 0) {
+    container.innerHTML = '<div class="text-center text-muted" style="padding: 20px;">Kho không có xe tồn lâu quá hạn mức. Tuyệt vời!</div>';
+    return;
+  }
+  
+  const riskLabels = [
+    { label: 'Bình thường', cls: 'badge', style: 'background:#1e3a5f;color:#60a5fa;' },
+    { label: 'Cần theo dõi', cls: 'badge', style: 'background:#3b2f00;color:#fbbf24;' },
+    { label: 'Cảnh báo',     cls: 'badge', style: 'background:#431407;color:#fb923c;' },
+    { label: 'Nguy cơ cao',   cls: 'badge', style: 'background:#450a0a;color:#f87171;' }
+  ];
+  
+  slowModels.forEach(item => {
+    const risk = riskLabels[item.riskLevel];
+    const card = document.createElement('div');
+    card.className = 'mobile-card';
+    card.onclick = () => {
+      const { fee = 25, extra = 4620, operation = 5000, targetProfitRate = 20 } = window.state?.feeSettings || {};
+      const denominator = 1 - (fee / 100) - (targetProfitRate / 100);
+      const targetPrice = denominator > 0 ? ((item.avgCost || 0) + extra + operation) / denominator : 0;
+      openCarDetailModal(item, targetPrice);
+    };
+    
+    card.innerHTML = `
+      <div class="mobile-card-header">
+        <div class="mobile-card-title">${item.modelName}</div>
+        <div class="mobile-card-badge"><span class="${risk.cls}" style="${risk.style}">${risk.label}</span></div>
+      </div>
+      <div class="mobile-card-subtitle">${item.brand}</div>
+      <div class="mobile-card-stats">
+        <div class="mobile-stat-item">
+          <span class="mobile-stat-label">Tồn kho</span>
+          <span class="mobile-stat-value">${item.stock} chiếc</span>
+        </div>
+        <div class="mobile-stat-item">
+          <span class="mobile-stat-label">Số ngày tồn</span>
+          <span class="mobile-stat-value">${item.daysInStock} ngày</span>
+        </div>
+        <div class="mobile-stat-item" style="flex: 1 1 100%;">
+          <span class="mobile-stat-label">Giá trị tồn</span>
+          <span class="mobile-stat-value">${formatCurrency(item.stockValue)}</span>
+        </div>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
+  const container = document.getElementById('transactionHistoryMobileContainer');
+  if (!container) return;
+  container.innerHTML = '';
+  
+  if (sortedTxs.length === 0) {
+    container.innerHTML = '<div class="text-center text-muted" style="padding: 20px;">Chưa có giao dịch nào thỏa mãn điều kiện lọc.</div>';
+    return;
+  }
+  
+  // Group by date string (DD/MM/YYYY)
+  const grouped = {};
+  sortedTxs.forEach(tx => {
+    const dStr = formatDate(tx.date);
+    if (!grouped[dStr]) grouped[dStr] = [];
+    grouped[dStr].push(tx);
+  });
+  
+  for (const dateStr in grouped) {
+    const groupDiv = document.createElement('div');
+    groupDiv.className = 'mobile-tx-group';
+    
+    const header = document.createElement('div');
+    header.className = 'mobile-tx-date-header';
+    header.textContent = dateStr;
+    groupDiv.appendChild(header);
+    
+    grouped[dateStr].forEach(tx => {
+      const isBuy = tx.type === 'buy';
+      const isReturnBuy = tx.type === 'return_buy';
+      const isReturnSell = tx.type === 'return_sell';
+      const isShopee = tx.type === 'sell' && tx.channel === 'Shopee';
+      
+      const displayUnitPrice = (isBuy || isReturnBuy)
+        ? Number(tx.unitCost)
+        : (isShopee && tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null && tx.taxUnitPrice > 0)
+          ? Number(tx.taxUnitPrice)
+          : Number(tx.unitPrice);
+      const totalAmount = Number(tx.qty) * displayUnitPrice;
+      
+      let iconClass = 'sell';
+      let iconHtml = '<i data-lucide="arrow-up-right"></i>';
+      let amountClass = 'positive';
+      let amountSign = '+';
+      
+      if (isBuy) {
+        iconClass = 'buy';
+        iconHtml = '<i data-lucide="arrow-down-left"></i>';
+        amountClass = 'negative';
+        amountSign = '-';
+      } else if (isReturnBuy || isReturnSell) {
+        iconClass = 'return';
+        iconHtml = '<i data-lucide="rotate-ccw"></i>';
+        amountClass = isReturnBuy ? 'positive' : 'negative';
+        amountSign = isReturnBuy ? '+' : '-';
+      }
+      
+      const row = document.createElement('div');
+      row.className = 'mobile-tx-row';
+      row.onclick = () => openEditTxModal(tx.id);
+      
+      row.innerHTML = `
+        <div class="mobile-tx-icon ${iconClass}">${iconHtml}</div>
+        <div class="mobile-tx-content">
+          <div class="mobile-tx-title">${tx.modelName}</div>
+          <div class="mobile-tx-meta">
+            <span>${tx.qty} x ${formatCurrency(displayUnitPrice)}</span>
+            <span>${isBuy ? 'Nhập kho' : (isReturnBuy || isReturnSell ? 'Hoàn hàng' : tx.channel)}</span>
+          </div>
+        </div>
+        <div class="mobile-tx-amount ${amountClass}">
+          ${amountSign}${formatCurrency(totalAmount)}
+        </div>
+      `;
+      groupDiv.appendChild(row);
+    });
+    
+    container.appendChild(groupDiv);
+  }
+  
+  if (window.lucide) {
+    window.lucide.createIcons({ root: container });
+  }
 }
