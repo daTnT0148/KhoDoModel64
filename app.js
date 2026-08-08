@@ -2793,7 +2793,28 @@ function setupReturnAutocomplete() {
     clearSelection();
     suggestionsBox.classList.add("hidden");
     suggestionsBox.innerHTML = "";
+    updateRestockVisibility();
   });
+
+  // Ẩn/hiện ô "Hoàn lại kho?" tuỳ loại trả hàng
+  function updateRestockVisibility() {
+    const restockGroup = document.getElementById("returnRestockGroup");
+    const restockSelect = document.getElementById("returnRestock");
+    if (!restockGroup || !restockSelect) return;
+    if (typeSelect.value === "return_buy") {
+      // Trả lại NCC: hàng luôn RỜI kho (restockToInventory = true = "yes")
+      // → ẩn ô hỏi, tự set = "yes" để hệ thống trừ đúng tồn kho
+      restockGroup.style.display = "none";
+      restockSelect.value = "yes";
+    } else {
+      // Trả hàng bán: cần hỏi khách có trả vật lý không → hiện, reset về mặc định
+      restockGroup.style.display = "";
+      restockSelect.value = "yes";
+    }
+  }
+
+  // Áp dụng ngay khi khởi tạo (mặc định đang là return_buy)
+  updateRestockVisibility();
 
   document.addEventListener("click", (e) => {
     if (e.target !== textInput && e.target !== suggestionsBox && !suggestionsBox.contains(e.target)) {
