@@ -26,6 +26,8 @@ let state = {
     extra: 4620,    // Phí kèm (vnd)
     operation: 5000 // Phí vận hành (vnd)
   },
+  // Kênh bán hàng tùy chỉnh (ngoài 3 kênh mặc định Facebook, Shopee, Trực tiếp)
+  customChannels: [],
   // --- MODULE THUẼ ---
   tax: {
     info: {
@@ -68,6 +70,114 @@ let charts = {
   channelChart: null,
   brandChart: null
 };
+
+
+// --- KÊNH BÁN HÀNG: Quản lý kênh tùy chỉnh ---
+
+const BUILTIN_CHANNELS = ["Shopee", "Facebook", "Trực tiếp"];
+const LS_CUSTOM_CHANNELS_KEY = "khoDoCustomChannels";
+
+// Trả về danh sách tất cả kênh (built-in + tùy chỉnh)
+function getChannels() {
+  return [...BUILTIN_CHANNELS, ...(state.customChannels || [])];
+}
+
+// Load kênh tùy chỉnh từ localStorage vào state
+function loadCustomChannels() {
+  try {
+    const saved = localStorage.getItem(LS_CUSTOM_CHANNELS_KEY);
+    state.customChannels = saved ? JSON.parse(saved) : [];
+  } catch (e) {
+    state.customChannels = [];
+  }
+}
+
+// Lưu kênh tùy chỉnh ra localStorage
+function saveCustomChannels() {
+  localStorage.setItem(LS_CUSTOM_CHANNELS_KEY, JSON.stringify(state.customChannels || []));
+}
+
+// Thêm một kênh tùy chỉnh mới (nếu chưa có)
+function addCustomChannel(name) {
+  const trimmed = name.trim();
+  if (!trimmed) return false;
+  const all = getChannels();
+  if (all.some(ch => ch.toLowerCase() === trimmed.toLowerCase())) return false; // đã tồn tại
+  state.customChannels.push(trimmed);
+  saveCustomChannels();
+  return true;
+}
+
+// Điền lại toàn bộ các <select> kênh bán hàng với danh sách hiện tại
+// selectedValue: kênh cần chọn sẵn sau khi populate
+function populateChannelSelects(selectedValue) {
+  const channels = getChannels();
+  const selectIds = ["sellChannel", "editTxChannel"];
+  selectIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    // Giữ lại giá trị đang chọn nếu không truyền vào
+    const current = selectedValue !== undefined ? selectedValue : el.value;
+    el.innerHTML = "";
+    channels.forEach(ch => {
+      const opt = document.createElement("option");
+      opt.value = ch;
+      opt.textContent = ch;
+      el.appendChild(opt);
+    });
+    // Option "Thêm kênh mới..."
+    const addOpt = document.createElement("option");
+    addOpt.value = "__add_new__";
+    addOpt.textContent = "+ Thêm kênh mới...";
+    el.appendChild(addOpt);
+    // Khôi phục giá trị
+    if (current && current !== "__add_new__" && channels.includes(current)) {
+      el.value = current;
+    } else {
+      el.value = channels[0]; // mặc định Shopee
+    }
+  });
+
+  // Populate dropdown lọc kênh ở tab Thuế (taxDetailChannel) — có thêm option "Tất cả"
+  const taxEl = document.getElementById("taxDetailChannel");
+  if (taxEl) {
+    const currentTax = taxEl.value;
+    taxEl.innerHTML = `<option value="all">Tất cả kênh bán hàng</option>`;
+    channels.forEach(ch => {
+      const opt = document.createElement("option");
+      opt.value = ch;
+      opt.textContent = ch;
+      taxEl.appendChild(opt);
+    });
+    if (currentTax && (currentTax === "all" || channels.includes(currentTax))) {
+      taxEl.value = currentTax;
+    }
+  }
+}
+
+// Gắn listener xử lý khi chọn "+ Thêm kênh mới..." cho 1 select cụ thể
+function setupChannelAddNewListener(selectId, onAdded) {
+  const el = document.getElementById(selectId);
+  if (!el || el.dataset.channelListenerAttached) return;
+  el.dataset.channelListenerAttached = "1";
+  el.addEventListener("change", function () {
+    if (this.value !== "__add_new__") return;
+    const name = prompt("Nhập tên kênh bán hàng mới:");
+    if (!name || !name.trim()) {
+      // Hủy → quay về Shopee
+      this.value = BUILTIN_CHANNELS[0];
+      return;
+    }
+    const ok = addCustomChannel(name);
+    if (!ok) {
+      alert(`Kênh "${name.trim()}" đã tồn tại!`);
+      this.value = BUILTIN_CHANNELS[0];
+      return;
+    }
+    populateChannelSelects(name.trim());
+    if (onAdded) onAdded(name.trim());
+  });
+}
 
 // --- HÀM TIỆN ÍCH HỖ TRỢ ---
 
@@ -1570,19 +1680,15 @@ function renderYearlyReportTable(yearlyStats) {
 function renderFinancialInsights(portfolioId, yearlyStats, inventoryList) {
   const txs = state.transactions[portfolioId] || [];
   
-  // 1. Phân tích các Kênh bán hàng (Facebook vs Shopee vs Trực tiếp)
-  const channelData = {
-    Facebook: { rev: 0, qty: 0 },
-    Shopee: { rev: 0, qty: 0 },
-    "Trực tiếp": { rev: 0, qty: 0 }
-  };
+  // 1. Phân tích các Kênh bán hàng (động theo getChannels() + bất kỳ kênh nào trong dữ liệu)
+  const channelData = {};
+  getChannels().forEach(ch => { channelData[ch] = { rev: 0, qty: 0 }; });
 
   txs.filter(tx => tx.type === "sell").forEach(tx => {
     const ch = tx.channel || "Trực tiếp";
-    if (channelData[ch]) {
-      channelData[ch].rev += (Number(tx.qty) * Number(tx.unitPrice));
-      channelData[ch].qty += Number(tx.qty);
-    }
+    if (!channelData[ch]) channelData[ch] = { rev: 0, qty: 0 }; // kênh cũ chưa có trong list
+    channelData[ch].rev += (Number(tx.qty) * Number(tx.unitPrice));
+    channelData[ch].qty += Number(tx.qty);
   });
 
   const totalRev = Object.values(channelData).reduce((sum, item) => sum + item.rev, 0);
@@ -1874,26 +1980,38 @@ function drawChannelChart(portfolioId) {
   if (charts.channelChart) charts.channelChart.destroy();
 
   const txs = state.transactions[portfolioId] || [];
-  const channels = { Facebook: 0, Shopee: 0, "Trực tiếp": 0 };
+  const channels = {};
+  getChannels().forEach(ch => { channels[ch] = 0; });
 
   txs.filter(tx => tx.type === "sell").forEach(tx => {
     const ch = tx.channel || "Trực tiếp";
-    if (channels[ch] !== undefined) {
-      channels[ch] += (Number(tx.qty) * Number(tx.unitPrice));
-    }
+    if (channels[ch] === undefined) channels[ch] = 0; // kênh cũ/lạ
+    channels[ch] += (Number(tx.qty) * Number(tx.unitPrice));
   });
 
-  const values = Object.values(channels);
-  const labels = Object.keys(channels);
+  // Lọc bỏ kênh = 0 để biểu đồ gọn hơn (chỉ giữ nếu không có kênh nào > 0)
+  let labels = Object.keys(channels);
+  let values = Object.values(channels);
   const hasData = values.some(v => v > 0);
+  if (hasData) {
+    const filtered = labels.map((l, i) => ({ l, v: values[i] })).filter(x => x.v > 0);
+    labels = filtered.map(x => x.l);
+    values = filtered.map(x => x.v);
+  }
+
+  // Bảng màu mở rộng (tự lặp vòng nếu có nhiều kênh)
+  const colorPalette = ["#6366f1", "#f97316", "#10b981", "#f43f5e", "#0ea5e9", "#a855f7", "#eab308", "#14b8a6"];
+  const bgColors = hasData
+    ? labels.map((_, i) => colorPalette[i % colorPalette.length])
+    : ["rgba(255,255,255,0.05)"];
 
   charts.channelChart = new Chart(ctx, {
     type: "doughnut",
     data: {
-      labels: labels,
+      labels: hasData ? labels : ["Chưa có dữ liệu"],
       datasets: [{
         data: hasData ? values : [1],
-        backgroundColor: hasData ? ["#6366f1", "#f97316", "#10b981"] : ["rgba(255,255,255,0.05)"],
+        backgroundColor: bgColors,
         borderWidth: 0
       }]
     },
@@ -3429,7 +3547,11 @@ function setupCsvImport() {
             tx.unitCost = price;
           } else if (type === "sell") {
             tx.unitPrice = price;
-            tx.channel = ["Facebook", "Shopee", "Trực tiếp"].includes(channel) ? channel : "Trực tiếp";
+            // Chấp nhận bất kỳ kênh nào; nếu lạ → tự đăng ký làm kênh tùy chỉnh
+            tx.channel = channel || "Trực tiếp";
+            if (tx.channel !== "Trực tiếp" && addCustomChannel(tx.channel)) {
+              // addCustomChannel sẽ tự lưu vào localStorage nếu kênh chưa có
+            }
           } else if (type === "return_buy") {
             tx.relatedTxId = relatedTxId;
             tx.unitCost = price;
@@ -3438,7 +3560,10 @@ function setupCsvImport() {
           } else if (type === "return_sell") {
             tx.relatedTxId = relatedTxId;
             tx.unitPrice = price;
-            tx.channel = ["Facebook", "Shopee", "Trực tiếp"].includes(channel) ? channel : "Trực tiếp";
+            tx.channel = channel || "Trực tiếp";
+            if (tx.channel !== "Trực tiếp" && addCustomChannel(tx.channel)) {
+              // tự đăng ký kênh lạ từ CSV
+            }
             tx.returnLoss = Number(returnLossRaw) || 0;
             tx.restockToInventory = restockToInventory;
           }
@@ -3455,6 +3580,7 @@ function setupCsvImport() {
           // Thêm các giao dịch mới nhập vào danh mục
           state.transactions[state.activePortfolioId].push(...newTxs);
           dbReplaceTransactions(state.activePortfolioId, state.transactions[state.activePortfolioId]);
+          populateChannelSelects(); // Cập nhật dropdown kênh nếu có kênh mới từ CSV
           refreshApplicationData();
           
           alert(`Đã nhập thành công ${importCount} giao dịch từ file Excel!${errorCount > 0 ? ` (Bỏ qua ${errorCount} dòng lỗi)` : ""}`);
@@ -6087,6 +6213,12 @@ window.addEventListener("DOMContentLoaded", async () => {
   
   setupProfitChartPeriodToggle(); // Kích hoạt bộ lọc biểu đồ lợi nhuận
   setupEditTxModalHandlers();    // Kích hoạt bộ chỉnh sửa Modal
+
+  // --- Kênh bán hàng tùy chỉnh ---
+  loadCustomChannels();          // Load kênh đã lưu từ localStorage
+  populateChannelSelects();      // Điền dropdown kênh bán (Shopee là mặc định đầu tiên)
+  setupChannelAddNewListener("sellChannel");       // Listener "+ Thêm kênh mới..." cho form Bán
+  setupChannelAddNewListener("editTxChannel");     // Listener cho form Chỉnh sửa giao dịch
 
   // 3. Tính toán và làm tươi dữ liệu ban đầu
   refreshApplicationData();
