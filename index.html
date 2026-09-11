@@ -339,6 +339,87 @@
 
           </div><!-- end .dashboard-charts-section -->
 
+          <!-- ===== CASH FLOW WIDGET ===== -->
+          <div class="cf-widget" id="cfWidget">
+
+            <!-- Header: tiêu đề + tab lọc kỳ -->
+            <div class="cf-header">
+              <div class="cf-title">
+                <span class="cf-title-icon">💰</span>
+                <span>Dòng Tiền</span>
+              </div>
+              <div class="cf-tabs" role="tablist">
+                <button class="cf-tab active" data-period="7"  aria-label="Tuần này">Tuần này</button>
+                <button class="cf-tab"        data-period="30" aria-label="Tháng này">Tháng này</button>
+                <button class="cf-tab"        data-period="0"  aria-label="Tất cả thời gian">Tất cả</button>
+              </div>
+            </div>
+
+            <!-- Tổng quan: Tiền Vào | Tiền Ra | Lợi Nhuận -->
+            <div class="cf-summary">
+              <div class="cf-summary-col">
+                <div class="cf-summary-label">Tiền Vào</div>
+                <div class="cf-summary-value cf-green" id="cfValIn">0 vnd</div>
+                <div class="cf-summary-sub" id="cfSubIn">0 giao dịch</div>
+              </div>
+              <div class="cf-summary-col">
+                <div class="cf-summary-label">Tiền Ra</div>
+                <div class="cf-summary-value cf-red" id="cfValOut">0 vnd</div>
+                <div class="cf-summary-sub" id="cfSubOut">0 giao dịch</div>
+              </div>
+              <div class="cf-summary-col">
+                <div class="cf-summary-label">Lợi Nhuận</div>
+                <div class="cf-summary-value cf-purple" id="cfValProfit">0 vnd</div>
+                <div class="cf-summary-sub" id="cfSubMargin">Biên: 0%</div>
+              </div>
+            </div>
+
+            <!-- Thanh tiến trình thu/chi -->
+            <div class="cf-progress-wrap">
+              <div class="cf-progress-bar">
+                <div class="cf-progress-fill" id="cfProgressFill" style="width:50%"></div>
+              </div>
+              <div class="cf-progress-labels">
+                <span class="cf-lbl-in"  id="cfLblIn">▲ Thu 0%</span>
+                <span class="cf-lbl-out" id="cfLblOut">▼ Chi 0%</span>
+              </div>
+            </div>
+
+            <!-- Kế hoạch tái đầu tư -->
+            <div class="cf-reinvest-box">
+              <div class="cf-reinvest-title">Kế hoạch tái đầu tư</div>
+              <div class="cf-reinvest-row">
+                <span class="cf-reinvest-label">Tỷ lệ tái đầu tư</span>
+                <div class="cf-rate-control">
+                  <button class="cf-rate-btn" id="cfRateDown" aria-label="Giảm 5%">−</button>
+                  <input  class="cf-rate-input" id="cfRateInput" type="number" min="0" max="100" step="5" value="50">
+                  <span  class="cf-rate-unit">%</span>
+                  <button class="cf-rate-btn" id="cfRateUp" aria-label="Tăng 5%">+</button>
+                </div>
+              </div>
+              <div class="cf-reinvest-results">
+                <div class="cf-reinvest-line">
+                  <span>🔁 Tái đầu tư</span>
+                  <strong class="cf-green" id="cfReinvestAmt">0 vnd</strong>
+                </div>
+                <div class="cf-reinvest-line">
+                  <span>💵 Có thể rút</span>
+                  <strong class="cf-purple" id="cfWithdrawAmt">0 vnd</strong>
+                </div>
+              </div>
+            </div>
+
+            <!-- Giao dịch gần nhất -->
+            <div class="cf-recent-wrap">
+              <div class="cf-recent-title">Giao dịch gần nhất</div>
+              <ul class="cf-recent-list" id="cfRecentList">
+                <!-- Nạp động bởi JS -->
+              </ul>
+            </div>
+
+          </div><!-- end .cf-widget -->
+          <!-- ===== END CASH FLOW WIDGET ===== -->
+
           <!-- Top Performing Models -->
           <div class="dashboard-table-card">
             <div class="card-header-actions">

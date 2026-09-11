@@ -3068,9 +3068,9 @@ function setupFormSubmissions() {
   const sellChannelEl = document.getElementById("sellChannel");
   const taxGroupEl = document.getElementById("sellTaxUnitPriceGroup");
   const unitPriceLabel = document.getElementById("sellUnitPriceLabel");
-  
-  sellChannelEl.addEventListener("change", (e) => {
-    if (e.target.value === "Shopee") {
+
+  function applySellChannelUI(channel) {
+    if (channel === "Shopee") {
       taxGroupEl.style.display = "block";
       unitPriceLabel.innerHTML = 'Lợi nhuận thực tế / chiếc <span class="required">*</span>';
     } else {
@@ -3078,7 +3078,14 @@ function setupFormSubmissions() {
       unitPriceLabel.innerHTML = 'Giá bán / chiếc <span class="required">*</span>';
       document.getElementById("sellTaxUnitPrice").value = "";
     }
+  }
+
+  sellChannelEl.addEventListener("change", (e) => {
+    applySellChannelUI(e.target.value);
   });
+
+  // Áp dụng ngay khi khởi tạo (vì populateChannelSelects set Shopee bằng JS, không fire "change")
+  applySellChannelUI(sellChannelEl.value);
 
   // FORM BÁN HÀNG (SELL)
   sellForm.addEventListener("submit", (e) => {
@@ -3848,6 +3855,9 @@ function refreshApplicationData() {
 
   // 5. Cập nhật các bộ lắng nghe khi chọn các mục trên Form (chống bug mất tham chiếu)
   setupSellFormWatcher(inventory);
+
+  // 6. Thông báo cho các widget khác (vd: Cash Flow Widget) cập nhật theo
+  document.dispatchEvent(new CustomEvent('transactionUpdated'));
 }
 
 // Kích hoạt vẽ lại biểu đồ khi chuyển tab tránh bug lỗi kích thước (do canvas ẩn)
@@ -6202,7 +6212,14 @@ window.addEventListener("DOMContentLoaded", async () => {
   setupReturnAutocomplete();     // Trả hàng: autocomplete tìm giao dịch gốc
   initShopeeCalc();
   setupBuyImageUpload();
-  setupFormSubmissions();
+
+  // --- Kênh bán hàng tùy chỉnh (phải chạy TRƯỚC setupFormSubmissions để dropdown có giá trị Shopee khi form init) ---
+  loadCustomChannels();
+  populateChannelSelects();      // Điền dropdown kênh bán (Shopee là mặc định đầu tiên)
+  setupChannelAddNewListener("sellChannel");
+  setupChannelAddNewListener("editTxChannel");
+
+  setupFormSubmissions();        // Gắn listener form (gọi applySellChannelUI với giá trị đã có)
   setupReturnFormSubmission();   // Trả hàng: xử lý submit form trả hàng
   setupPortfolioActions();
   setupInteractiveFilters();
@@ -6213,12 +6230,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   
   setupProfitChartPeriodToggle(); // Kích hoạt bộ lọc biểu đồ lợi nhuận
   setupEditTxModalHandlers();    // Kích hoạt bộ chỉnh sửa Modal
-
-  // --- Kênh bán hàng tùy chỉnh ---
-  loadCustomChannels();          // Load kênh đã lưu từ localStorage
-  populateChannelSelects();      // Điền dropdown kênh bán (Shopee là mặc định đầu tiên)
-  setupChannelAddNewListener("sellChannel");       // Listener "+ Thêm kênh mới..." cho form Bán
-  setupChannelAddNewListener("editTxChannel");     // Listener cho form Chỉnh sửa giao dịch
 
   // 3. Tính toán và làm tươi dữ liệu ban đầu
   refreshApplicationData();
@@ -6594,3 +6605,272 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
     window.lucide.createIcons({ root: container });
   }
 }
+
+/* ===== CASH FLOW WIDGET ===== */
+(function () {
+  'use strict';
+
+  // ---- Hằng số ----
+  const LS_RATE_KEY   = 'cf_reinvest_rate';
+  const RECENT_LIMIT  = 5;
+
+  // ---- Trạng thái nội bộ ----
+  let _activePeriod = 7;   // số ngày lọc; 0 = tất cả
+
+  // ---- Lấy tỷ lệ tái đầu tư đã lưu (mặc định 50%) ----
+  function getRate() {
+    const v = parseInt(localStorage.getItem(LS_RATE_KEY), 10);
+    return (!isNaN(v) && v >= 0 && v <= 100) ? v : 50;
+  }
+
+  // ---- Lưu tỷ lệ ----
+  function saveRate(v) {
+    localStorage.setItem(LS_RATE_KEY, String(v));
+  }
+
+  // ---- Lấy mảng giao dịch từ state (nguồn thực của app) ----
+  function getTransactions() {
+    try {
+      const pid = state.activePortfolioId;
+      return (state.transactions && state.transactions[pid]) || [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // ---- Lọc giao dịch theo kỳ ----
+  // ---- Lọc giao dịch theo kỳ lịch dương ----
+  // period = 7  → tuần hiện tại (Thứ Hai – Chủ Nhật)
+  // period = 30 → tháng hiện tại (ngày 1 – hết tháng)
+  // period = 0  → tất cả thời gian
+  function filterByPeriod(txs, period) {
+    if (!period) return txs;                       // 0 = Tất cả
+
+    const now  = new Date();
+    let start, end;
+
+    if (period === 7) {
+      // Tuần hiện tại: Thứ Hai 00:00:00 → Chủ Nhật 23:59:59
+      const day  = now.getDay();                   // 0=CN, 1=T2, …, 6=T7
+      const diffToMon = (day === 0) ? -6 : 1 - day; // số ngày lùi về T2
+      start = new Date(now);
+      start.setDate(now.getDate() + diffToMon);
+      start.setHours(0, 0, 0, 0);
+
+      end = new Date(start);
+      end.setDate(start.getDate() + 6);
+      end.setHours(23, 59, 59, 999);
+    } else if (period === 30) {
+      // Tháng hiện tại: ngày 1 00:00:00 → ngày cuối 23:59:59
+      start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+      end   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    }
+
+    return txs.filter(tx => {
+      const t = tx.date ? new Date(tx.date).getTime() : 0;
+      return t >= start.getTime() && t <= end.getTime();
+    });
+  }
+
+  // ---- Tính số tiền của 1 giao dịch ----
+  // Tiền Vào: sell       → qty * unitPrice  (hoặc taxUnitPrice nếu Shopee)
+  // Tiền Ra:  buy        → qty * unitCost
+  //           return_buy → đã trả NCC: số tiền thu hồi (coi là âm trong chi)
+  //           return_sell→ trả lại khách: số tiền mất (coi là âm trong thu)
+  function classifyTx(tx) {
+    const qty = Number(tx.qty) || 0;
+    switch (tx.type) {
+      case 'sell': {
+        // Dùng taxUnitPrice (giá đăng Shopee) nếu có; fallback unitPrice
+        const price = Number(tx.taxUnitPrice || tx.unitPrice) || 0;
+        return { dir: 'in',  amount: qty * price };
+      }
+      case 'buy':
+        return { dir: 'out', amount: qty * (Number(tx.unitCost) || 0) };
+      case 'return_sell':
+        // Khách hoàn trả: giảm doanh thu → tiền ra (mất)
+        return { dir: 'out', amount: qty * (Number(tx.unitPrice) || 0) };
+      case 'return_buy':
+        // Trả NCC: nhận lại tiền → tiền vào
+        return { dir: 'in',  amount: qty * (Number(tx.unitCost) || 0) };
+      default:
+        return null;
+    }
+  }
+
+  // ---- Định dạng DD/MM/YY ----
+  function fmtDate(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yy = String(d.getFullYear()).slice(-2);
+    return `${dd}/${mm}/${yy}`;
+  }
+
+  // ---- Render toàn bộ widget ----
+  function render() {
+    const allTxs      = getTransactions();
+    const txs         = filterByPeriod(allTxs, _activePeriod);
+    const rate        = getRate();
+
+    // Tính tổng
+    let totalIn   = 0, countIn  = 0;
+    let totalOut  = 0, countOut = 0;
+
+    txs.forEach(tx => {
+      const c = classifyTx(tx);
+      if (!c) return;
+      if (c.dir === 'in')  { totalIn  += c.amount; countIn++;  }
+      else                 { totalOut += c.amount; countOut++; }
+    });
+
+    const netProfit = totalIn - totalOut;
+    const total     = totalIn + totalOut;
+    const pctIn     = total > 0 ? (totalIn / total * 100) : 0;
+    const pctOut    = 100 - pctIn;
+    const margin    = totalIn > 0 ? (netProfit / totalIn * 100) : 0;
+    const reinvest  = Math.max(0, netProfit) * rate / 100;
+    const withdraw  = Math.max(0, netProfit) * (100 - rate) / 100;
+    const isLoss    = netProfit < 0;
+
+    // Dùng formatCurrency của app (đã có sẵn toàn cục)
+    const fmt = (n) => {
+      try { return formatCurrency(Math.abs(n)); }
+      catch (_) { return Math.abs(Math.round(n)).toLocaleString('vi-VN') + ' ₫'; }
+    };
+
+    // --- Tổng quan ---
+    _set('cfValIn',    fmt(totalIn));
+    _set('cfSubIn',    `${countIn} giao dịch`);
+    _set('cfValOut',   fmt(totalOut));
+    _set('cfSubOut',   `${countOut} giao dịch`);
+    _set('cfSubMargin', `Biên: ${margin.toFixed(1)}%`);
+
+    // Lợi nhuận — đổi màu nếu âm
+    const profitEl = document.getElementById('cfValProfit');
+    if (profitEl) {
+      profitEl.textContent = (isLoss ? '⚠️ −' : '') + fmt(netProfit);
+      profitEl.className   = 'cf-summary-value ' + (isLoss ? 'cf-red' : 'cf-purple');
+    }
+
+    // --- Thanh tiến trình ---
+    _style('cfProgressFill', 'width', pctIn.toFixed(1) + '%');
+    _set('cfLblIn',  `▲ Thu ${pctIn.toFixed(0)}%`);
+    _set('cfLblOut', `▼ Chi ${pctOut.toFixed(0)}%`);
+
+    // --- Reinvestment ---
+    _set('cfReinvestAmt', fmt(reinvest));
+    _set('cfWithdrawAmt', fmt(withdraw));
+
+    // Sync input nếu khác (tránh vòng lặp)
+    const rateInput = document.getElementById('cfRateInput');
+    if (rateInput && Number(rateInput.value) !== rate) rateInput.value = rate;
+
+    // --- Giao dịch gần nhất ---
+    renderRecent(allTxs);  // luôn dùng allTxs không lọc kỳ cho phần này
+  }
+
+  // ---- Render danh sách giao dịch gần nhất ----
+  function renderRecent(allTxs) {
+    const list = document.getElementById('cfRecentList');
+    if (!list) return;
+
+    // Sắp xếp mới nhất trước, lấy tối đa RECENT_LIMIT
+    const sorted = [...allTxs]
+      .filter(tx => classifyTx(tx))
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .slice(0, RECENT_LIMIT);
+
+    if (!sorted.length) {
+      list.innerHTML = '<li class="cf-recent-empty">Chưa có giao dịch nào</li>';
+      return;
+    }
+
+    const fmt = (n) => {
+      try { return formatCurrency(Math.abs(n)); }
+      catch (_) { return Math.abs(Math.round(n)).toLocaleString('vi-VN') + ' ₫'; }
+    };
+
+    list.innerHTML = sorted.map(tx => {
+      const c       = classifyTx(tx);
+      const isIn    = c.dir === 'in';
+      const sign    = isIn ? '+' : '−';
+      const amtCls  = isIn ? 'cf-green' : 'cf-red';
+      const badgeCls= isIn ? 'cf-badge-in' : 'cf-badge-out';
+      const icon    = isIn ? '🟢' : '🔴';
+      const name    = tx.modelName || tx.name || tx.id || '(không tên)';
+      const typeTag = tx.type === 'sell'        ? 'Bán'
+                    : tx.type === 'buy'         ? 'Mua'
+                    : tx.type === 'return_sell' ? 'Trả KH'
+                    : tx.type === 'return_buy'  ? 'Trả NCC'
+                    : tx.type;
+
+      return `
+        <li class="cf-recent-item">
+          <div class="cf-recent-badge ${badgeCls}">${icon}</div>
+          <div class="cf-recent-info">
+            <div class="cf-recent-name">${name}</div>
+            <div class="cf-recent-date">${typeTag} · ${fmtDate(tx.date)}</div>
+          </div>
+          <div class="cf-recent-amount ${amtCls}">${sign}${fmt(c.amount)}</div>
+        </li>`;
+    }).join('');
+  }
+
+  // ---- Helpers DOM ----
+  function _set(id, text)               { const el = document.getElementById(id); if (el) el.textContent = text; }
+  function _style(id, prop, val)        { const el = document.getElementById(id); if (el) el.style[prop] = val; }
+
+  // ---- Khởi tạo sự kiện ----
+  function init() {
+    // Gắn sự kiện tab lọc kỳ
+    document.querySelectorAll('.cf-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.cf-tab').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        _activePeriod = parseInt(btn.dataset.period, 10);
+        render();
+      });
+    });
+
+    // Nút tăng/giảm tỷ lệ
+    const rateInput = document.getElementById('cfRateInput');
+    document.getElementById('cfRateDown')?.addEventListener('click', () => {
+      const v = Math.max(0, getRate() - 5);
+      saveRate(v);
+      render();
+    });
+    document.getElementById('cfRateUp')?.addEventListener('click', () => {
+      const v = Math.min(100, getRate() + 5);
+      saveRate(v);
+      render();
+    });
+
+    // Gõ trực tiếp vào ô tỷ lệ
+    rateInput?.addEventListener('change', () => {
+      let v = parseInt(rateInput.value, 10);
+      if (isNaN(v)) v = 50;
+      v = Math.max(0, Math.min(100, v));
+      rateInput.value = v;
+      saveRate(v);
+      render();
+    });
+
+    // Lắng nghe sự kiện giao dịch cập nhật (dispatch bởi app chính)
+    document.addEventListener('transactionUpdated', render);
+
+    // Render lần đầu
+    render();
+  }
+
+  // ---- Chờ DOM sẵn sàng ----
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    // Nếu DOMContentLoaded đã qua, defer một tick để state sẵn sàng
+    setTimeout(init, 0);
+  }
+
+})();
+/* ===== END CASH FLOW WIDGET ===== */
