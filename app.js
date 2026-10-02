@@ -531,10 +531,26 @@ function getReturnableTransactions(portfolioId, sourceType) {
   // sourceType: "buy" khi làm Trả hàng nhập, "sell" khi làm Trả hàng bán
   const txs = state.transactions[portfolioId] || [];
   const returnedMap = computeReturnedQtyMap(txs);
+
+  // Lọc 60 ngày gần nhất chỉ áp dụng cho trả hàng bán (sell)
+  // Trả hàng nhập (buy) không giới hạn ngày
+  const DAYS_LIMIT = 60;
+  const cutoff = sourceType === "sell"
+    ? Date.now() - DAYS_LIMIT * 86_400_000
+    : null;
+
   return txs
-    .filter(tx => tx.type === sourceType)
+    .filter(tx => {
+      if (tx.type !== sourceType) return false;
+      if (cutoff !== null) {
+        const txTime = tx.date ? new Date(tx.date).getTime() : 0;
+        if (txTime < cutoff) return false;       // ngoài 60 ngày → bỏ qua
+      }
+      return true;
+    })
     .map(tx => ({ ...tx, returnableQty: Math.max(0, Number(tx.qty) - (returnedMap.total[tx.id] || 0)) }))
-    .filter(tx => tx.returnableQty > 0);
+    .filter(tx => tx.returnableQty > 0)
+    .sort((a, b) => new Date(b.date) - new Date(a.date)); // mới nhất lên đầu
 }
 
 function calculateInventory(portfolioId) {
@@ -2860,11 +2876,16 @@ function setupReturnAutocomplete() {
     const matches = candidates.filter(tx =>
       tx.modelName.toLowerCase().includes(val) ||
       tx.brand.toLowerCase().includes(val) ||
+      (tx.color || "").toLowerCase().includes(val) ||
       formatDate(tx.date).includes(val)
-    ).slice(0, 8);
+    ).slice(0, 15); // Tăng lên 15 kết quả
 
     if (matches.length === 0) {
-      suggestionsBox.innerHTML = `<div class="suggestion-item suggestion-item-empty" style="cursor:default;">Không tìm thấy giao dịch phù hợp còn có thể trả</div>`;
+      // Gợi ý thêm nếu là return_sell (bị giới hạn 60 ngày)
+      const noteStr = currentSourceType() === "sell"
+        ? `<div style="font-size:11px;color:var(--text-muted);padding:6px 10px;">💡 Chỉ hiện giao dịch bán trong <strong>60 ngày gần nhất</strong>. Nếu không tìm thấy, xe có thể đã bán trước đó.</div>`
+        : "";
+      suggestionsBox.innerHTML = `<div class="suggestion-item suggestion-item-empty" style="cursor:default;">Không tìm thấy giao dịch phù hợp còn có thể trả</div>${noteStr}`;
       suggestionsBox.classList.remove("hidden");
       return;
     }
@@ -6672,27 +6693,23 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
     });
   }
 
-  // ---- Tính số tiền của 1 giao dịch ----
-  // Tiền Vào: sell       → qty * unitPrice  (hoặc taxUnitPrice nếu Shopee)
-  // Tiền Ra:  buy        → qty * unitCost
-  //           return_buy → đã trả NCC: số tiền thu hồi (coi là âm trong chi)
-  //           return_sell→ trả lại khách: số tiền mất (coi là âm trong thu)
+  // ---- Phân loại giao dịch cho Dòng Tiền ----
+  // return_sell → GIẢMTiền Vào (amount âm, dir='in')
+  // return_buy  → GIẢMTiền Ra  (amount âm, dir='out')
   function classifyTx(tx) {
     const qty = Number(tx.qty) || 0;
     switch (tx.type) {
-      case 'sell': {
-        // Dùng taxUnitPrice (giá đăng Shopee) nếu có; fallback unitPrice
-        const price = Number(tx.taxUnitPrice || tx.unitPrice) || 0;
-        return { dir: 'in',  amount: qty * price };
-      }
+      case 'sell':
+        // unitPrice = lợi nhuận thực (Shopee) hoặc giá bán (kênh khác) — đúng cho dòng tiền
+        return { dir: 'in',  amount: qty * (Number(tx.unitPrice) || 0) };
       case 'buy':
-        return { dir: 'out', amount: qty * (Number(tx.unitCost) || 0) };
+        return { dir: 'out', amount: qty * (Number(tx.unitCost)  || 0) };
       case 'return_sell':
-        // Khách hoàn trả: giảm doanh thu → tiền ra (mất)
-        return { dir: 'out', amount: qty * (Number(tx.unitPrice) || 0) };
+        // Khách hoàn → GIẢM Tiền Vào (amount = âm)
+        return { dir: 'in',  amount: -(qty * (Number(tx.unitPrice) || 0)) };
       case 'return_buy':
-        // Trả NCC: nhận lại tiền → tiền vào
-        return { dir: 'in',  amount: qty * (Number(tx.unitCost) || 0) };
+        // Trả NCC → GIẢM Tiền Ra (amount = âm)
+        return { dir: 'out', amount: -(qty * (Number(tx.unitCost)  || 0)) };
       default:
         return null;
     }
@@ -6714,25 +6731,78 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
     const txs         = filterByPeriod(allTxs, _activePeriod);
     const rate        = getRate();
 
-    // Tính tổng
-    let totalIn   = 0, countIn  = 0;
-    let totalOut  = 0, countOut = 0;
+    // Tính tổng — tách riêng 4 loại giao dịch
+    let totalIn   = 0, totalOut  = 0;
+    let countSell = 0, countBuy  = 0;
+    let countRSell= 0, countRBuy = 0;
+    let realizedProfit = 0;
 
-    txs.forEach(tx => {
-      const c = classifyTx(tx);
-      if (!c) return;
-      if (c.dir === 'in')  { totalIn  += c.amount; countIn++;  }
-      else                 { totalOut += c.amount; countOut++; }
+    // Build fifoMap từ TẤT CẢ giao dịch (không lọc kỳ) để tra cứu fifoAvgCost của giao dịch bán gốc
+    const fifoMap = {};
+    allTxs.forEach(t => {
+      if (t.type === 'sell' && t.fifoAvgCost !== undefined) {
+        fifoMap[t.id] = Number(t.fifoAvgCost) || 0;
+      }
     });
 
-    const netProfit = totalIn - totalOut;
-    const total     = totalIn + totalOut;
-    const pctIn     = total > 0 ? (totalIn / total * 100) : 0;
-    const pctOut    = 100 - pctIn;
-    const margin    = totalIn > 0 ? (netProfit / totalIn * 100) : 0;
-    const reinvest  = Math.max(0, netProfit) * rate / 100;
-    const withdraw  = Math.max(0, netProfit) * (100 - rate) / 100;
-    const isLoss    = netProfit < 0;
+    txs.forEach(tx => {
+      const qty = Number(tx.qty) || 0;
+
+      // ── Dòng tiền (Cash Flow) ──
+      const c = classifyTx(tx);
+      if (c) {
+        if (c.dir === 'in')  totalIn  += c.amount; // có thể âm nếu return_sell
+        else                 totalOut += c.amount; // có thể âm nếu return_buy
+      }
+
+      // ── Đếm loại giao dịch ──
+      if      (tx.type === 'sell')        countSell++;
+      else if (tx.type === 'buy')         countBuy++;
+      else if (tx.type === 'return_sell') countRSell++;
+      else if (tx.type === 'return_buy')  countRBuy++;
+
+      // ── Lợi nhuận thực tế (Realized Profit) ──
+      if (tx.type === 'sell') {
+        // Profit = (giá bán - giá vốn FIFO) × số lượng
+        const cost = Number(tx.fifoAvgCost) || 0;
+        realizedProfit += qty * (Number(tx.unitPrice) - cost);
+
+      } else if (tx.type === 'return_sell') {
+        // Đảo ngược lợi nhuận của các xe bị hoàn:
+        // tìm fifoAvgCost từ giao dịch bán gốc (đã được calculateInventory gán sẵn)
+        const origFifoCost = fifoMap[tx.relatedTxId] ?? 0;
+        const returnPrice  = Number(tx.unitPrice) || 0;
+        realizedProfit -= qty * (returnPrice - origFifoCost);
+        realizedProfit -= Number(tx.returnLoss) || 0;
+
+      } else if (tx.type === 'return_buy') {
+        // Không ảnh hưởng realizedProfit (giảm chi phí đã được tính qua FIFO),
+        // chỉ trừ các khoản lỗ phát sinh thêm (ship, bao bì...)
+        realizedProfit -= Number(tx.returnLoss) || 0;
+      }
+    });
+
+    // ── Các chỉ số dẫn xuất ──
+    const netCashFlow = totalIn - totalOut;
+    // Thanh tiến trình dùng trị tuyệt đối để tránh % âm
+    const absIn  = Math.max(0, totalIn);
+    const absOut = Math.max(0, totalOut);
+    const total  = absIn + absOut;
+    const pctIn  = total > 0 ? (absIn / total * 100) : 50;
+    const pctOut = 100 - pctIn;
+
+    const margin   = absIn > 0 ? (realizedProfit / absIn * 100) : 0;
+    const reinvest = Math.max(0, realizedProfit) * rate / 100;
+    const withdraw = Math.max(0, realizedProfit) * (100 - rate) / 100;
+    const isLoss   = realizedProfit < 0;
+
+    // ── Subtext mô tả cho Tiền Vào / Tiền Ra ──
+    const subIn  = countRSell > 0
+      ? `${countSell} bán (−${countRSell} hoàn)`
+      : `${countSell} giao dịch`;
+    const subOut = countRBuy > 0
+      ? `${countBuy} mua (−${countRBuy} trả NCC)`
+      : `${countBuy} giao dịch`;
 
     // Dùng formatCurrency của app (đã có sẵn toàn cục)
     const fmt = (n) => {
@@ -6741,16 +6811,16 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
     };
 
     // --- Tổng quan ---
-    _set('cfValIn',    fmt(totalIn));
-    _set('cfSubIn',    `${countIn} giao dịch`);
-    _set('cfValOut',   fmt(totalOut));
-    _set('cfSubOut',   `${countOut} giao dịch`);
+    _set('cfValIn',     fmt(totalIn));          // fmt đã dùng Math.abs nên âm cũng hiển thị đúng
+    _set('cfSubIn',     subIn);
+    _set('cfValOut',    fmt(totalOut));
+    _set('cfSubOut',    subOut);
     _set('cfSubMargin', `Biên: ${margin.toFixed(1)}%`);
 
     // Lợi nhuận — đổi màu nếu âm
     const profitEl = document.getElementById('cfValProfit');
     if (profitEl) {
-      profitEl.textContent = (isLoss ? '⚠️ −' : '') + fmt(netProfit);
+      profitEl.textContent = (isLoss ? '⚠️ −' : '') + fmt(realizedProfit);
       profitEl.className   = 'cf-summary-value ' + (isLoss ? 'cf-red' : 'cf-purple');
     }
 
@@ -6793,18 +6863,38 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
     };
 
     list.innerHTML = sorted.map(tx => {
-      const c       = classifyTx(tx);
-      const isIn    = c.dir === 'in';
-      const sign    = isIn ? '+' : '−';
-      const amtCls  = isIn ? 'cf-green' : 'cf-red';
-      const badgeCls= isIn ? 'cf-badge-in' : 'cf-badge-out';
-      const icon    = isIn ? '🟢' : '🔴';
-      const name    = tx.modelName || tx.name || tx.id || '(không tên)';
-      const typeTag = tx.type === 'sell'        ? 'Bán'
-                    : tx.type === 'buy'         ? 'Mua'
-                    : tx.type === 'return_sell' ? 'Trả KH'
-                    : tx.type === 'return_buy'  ? 'Trả NCC'
-                    : tx.type;
+      const c    = classifyTx(tx);
+      const qty  = Number(tx.qty) || 0;
+      const name = tx.modelName || tx.name || tx.id || '(không tên)';
+
+      let icon, badgeCls, amtCls, sign, displayAmt, typeTag;
+
+      switch (tx.type) {
+        case 'sell':
+          icon = '🟢'; badgeCls = 'cf-badge-in';  amtCls = 'cf-green'; sign = '+';
+          displayAmt = qty * (Number(tx.unitPrice) || 0);
+          typeTag = 'Bán';
+          break;
+        case 'buy':
+          icon = '🔴'; badgeCls = 'cf-badge-out'; amtCls = 'cf-red';   sign = '−';
+          displayAmt = qty * (Number(tx.unitCost)  || 0);
+          typeTag = 'Mua';
+          break;
+        case 'return_sell':
+          // Khách hoàn: giảm doanh thu → màu cam, dấu −
+          icon = '🟠'; badgeCls = 'cf-badge-out'; amtCls = 'cf-red';   sign = '−';
+          displayAmt = qty * (Number(tx.unitPrice) || 0);
+          typeTag = 'Hoàn KH';
+          break;
+        case 'return_buy':
+          // Trả NCC: lấy lại tiền → màu xanh nhạt, dấu +
+          icon = '🔵'; badgeCls = 'cf-badge-in';  amtCls = 'cf-green'; sign = '+';
+          displayAmt = qty * (Number(tx.unitCost)  || 0);
+          typeTag = 'Hoàn NCC';
+          break;
+        default:
+          return '';
+      }
 
       return `
         <li class="cf-recent-item">
@@ -6813,7 +6903,7 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
             <div class="cf-recent-name">${name}</div>
             <div class="cf-recent-date">${typeTag} · ${fmtDate(tx.date)}</div>
           </div>
-          <div class="cf-recent-amount ${amtCls}">${sign}${fmt(c.amount)}</div>
+          <div class="cf-recent-amount ${amtCls}">${sign}${fmt(displayAmt)}</div>
         </li>`;
     }).join('');
   }
@@ -6874,3 +6964,39 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
 
 })();
 /* ===== END CASH FLOW WIDGET ===== */
+
+// --- DEBUG HELPER: goi tu Console trinh duyet ---
+// Vi du: debugReturn('f40')  hoac  debugReturn('demon king')
+window.debugReturn = function(keyword) {
+  var pid = state.activePortfolioId;
+  var txs = state.transactions[pid] || [];
+  var returnedMap = computeReturnedQtyMap(txs);
+  var kw = (keyword || '').toLowerCase();
+  var DAYS_LIMIT = 60;
+  var cutoff = Date.now() - DAYS_LIMIT * 86400000;
+
+  var allSells = txs.filter(function(t) {
+    return t.type === 'sell' && (
+      (t.modelName || '').toLowerCase().includes(kw) ||
+      (t.brand || '').toLowerCase().includes(kw)
+    );
+  });
+
+  console.group('debugReturn("' + keyword + '")');
+  if (!allSells.length) {
+    console.warn('Khong tim thay giao dich ban nao khop voi: ' + keyword);
+  }
+  allSells.forEach(function(tx) {
+    var txTime = tx.date ? new Date(tx.date).getTime() : 0;
+    var alreadyReturned = returnedMap.total[tx.id] || 0;
+    var returnableQty = Math.max(0, Number(tx.qty) - alreadyReturned);
+    var tooOld = txTime < cutoff;
+    var reason = returnableQty === 0
+      ? 'Da tra het (returnableQty=0)'
+      : tooOld
+        ? 'Ngoai 60 ngay (ban: ' + new Date(txTime).toLocaleDateString('vi-VN') + ')'
+        : 'SE HIEN trong autocomplete';
+    console.log('[' + tx.id + '] ' + tx.modelName + ' | ' + tx.brand + ' | ' + tx.date + ' | qty:' + tx.qty + ' | da_tra:' + alreadyReturned + ' | con:' + returnableQty + ' => ' + reason);
+  });
+  console.groupEnd();
+};
