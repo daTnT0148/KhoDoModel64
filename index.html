@@ -342,16 +342,34 @@
           <!-- ===== CASH FLOW WIDGET ===== -->
           <div class="cf-widget" id="cfWidget">
 
-            <!-- Header: tiêu đề + tab lọc kỳ -->
+            <!-- Header: tiêu đề + pickers -->
             <div class="cf-header">
               <div class="cf-title">
                 <span class="cf-title-icon">💰</span>
                 <span>Dòng Tiền</span>
               </div>
-              <div class="cf-tabs" role="tablist">
-                <button class="cf-tab active" data-period="7"  aria-label="Tuần này">Tuần này</button>
-                <button class="cf-tab"        data-period="30" aria-label="Tháng này">Tháng này</button>
-                <button class="cf-tab"        data-period="0"  aria-label="Tất cả thời gian">Tất cả</button>
+              <div class="cf-controls-wrap">
+                <!-- Bộ chọn tháng/năm cụ thể -->
+                <div class="cf-picker-row" id="cfPickerRow">
+                  <select id="cfMonthPick" class="cf-pick-sel" aria-label="Chọn tháng">
+                    <option value="0">Cả năm</option>
+                    <option value="1">Tháng 1</option>
+                    <option value="2">Tháng 2</option>
+                    <option value="3">Tháng 3</option>
+                    <option value="4">Tháng 4</option>
+                    <option value="5">Tháng 5</option>
+                    <option value="6">Tháng 6</option>
+                    <option value="7">Tháng 7</option>
+                    <option value="8">Tháng 8</option>
+                    <option value="9">Tháng 9</option>
+                    <option value="10">Tháng 10</option>
+                    <option value="11">Tháng 11</option>
+                    <option value="12">Tháng 12</option>
+                  </select>
+                  <select id="cfYearPick" class="cf-pick-sel" aria-label="Chọn năm">
+                    <!-- Populated by JS based on transaction history -->
+                  </select>
+                </div>
               </div>
             </div>
 

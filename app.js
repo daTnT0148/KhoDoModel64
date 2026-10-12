@@ -6636,7 +6636,8 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
   const RECENT_LIMIT  = 5;
 
   // ---- Trạng thái nội bộ ----
-  let _activePeriod = 7;   // số ngày lọc; 0 = tất cả
+  let _selectedMonth = new Date().getMonth() + 1; // 1-12, 0 = Cả năm
+  let _selectedYear  = new Date().getFullYear();  // YYYY, 0 = Tất cả thời gian
 
   // ---- Lấy tỷ lệ tái đầu tư đã lưu (mặc định 50%) ----
   function getRate() {
@@ -6659,32 +6660,19 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
     }
   }
 
-  // ---- Lọc giao dịch theo kỳ ----
-  // ---- Lọc giao dịch theo kỳ lịch dương ----
-  // period = 7  → tuần hiện tại (Thứ Hai – Chủ Nhật)
-  // period = 30 → tháng hiện tại (ngày 1 – hết tháng)
-  // period = 0  → tất cả thời gian
-  function filterByPeriod(txs, period) {
-    if (!period) return txs;                       // 0 = Tất cả
+  // ---- Lọc giao dịch theo kỳ lịch dương (chỉ dùng dropdown) ----
+  function filterByPeriod(txs) {
+    if (_selectedYear === 0) return txs; // 0 = Tất cả các năm
 
-    const now  = new Date();
     let start, end;
-
-    if (period === 7) {
-      // Tuần hiện tại: Thứ Hai 00:00:00 → Chủ Nhật 23:59:59
-      const day  = now.getDay();                   // 0=CN, 1=T2, …, 6=T7
-      const diffToMon = (day === 0) ? -6 : 1 - day; // số ngày lùi về T2
-      start = new Date(now);
-      start.setDate(now.getDate() + diffToMon);
-      start.setHours(0, 0, 0, 0);
-
-      end = new Date(start);
-      end.setDate(start.getDate() + 6);
-      end.setHours(23, 59, 59, 999);
-    } else if (period === 30) {
-      // Tháng hiện tại: ngày 1 00:00:00 → ngày cuối 23:59:59
-      start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-      end   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    if (_selectedMonth === 0) {
+      // Cả năm
+      start = new Date(_selectedYear, 0, 1, 0, 0, 0, 0);
+      end   = new Date(_selectedYear, 11, 31, 23, 59, 59, 999);
+    } else {
+      // Tháng cụ thể
+      start = new Date(_selectedYear, _selectedMonth - 1, 1, 0, 0, 0, 0);
+      end   = new Date(_selectedYear, _selectedMonth, 0, 23, 59, 59, 999);
     }
 
     return txs.filter(tx => {
@@ -6725,11 +6713,44 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
     return `${dd}/${mm}/${yy}`;
   }
 
+  // ---- Cập nhật các tuỳ chọn năm dựa trên dữ liệu ----
+  function updateYearOptions(allTxs) {
+    const yearSel = document.getElementById('cfYearPick');
+    if (!yearSel) return;
+    const years = new Set();
+    allTxs.forEach(tx => {
+      if (tx.date) years.add(new Date(tx.date).getFullYear());
+    });
+    years.add(new Date().getFullYear()); // Luôn có năm hiện hành
+    
+    // Sắp xếp mới nhất trước
+    const sortedYears = Array.from(years).sort((a,b) => b - a);
+    let html = `<option value="0">Tất cả các năm</option>`;
+    html += sortedYears.map(y => `<option value="${y}">Năm ${y}</option>`).join('');
+    
+    if (yearSel.innerHTML !== html) {
+      yearSel.innerHTML = html;
+      yearSel.value = _selectedYear;
+    }
+    
+    const monthSel = document.getElementById('cfMonthPick');
+    if (monthSel) {
+      // Nếu chọn "Tất cả các năm", ẩn/vô hiệu hóa ô chọn tháng
+      if (_selectedYear === 0) {
+        monthSel.style.display = 'none';
+      } else {
+        monthSel.style.display = '';
+        monthSel.value = _selectedMonth;
+      }
+    }
+  }
+
   // ---- Render toàn bộ widget ----
   function render() {
-    const allTxs      = getTransactions();
-    const txs         = filterByPeriod(allTxs, _activePeriod);
-    const rate        = getRate();
+    const allTxs = getTransactions();
+    updateYearOptions(allTxs); // cập nhật list dropdown năm
+    const txs    = filterByPeriod(allTxs);
+    const rate   = getRate();
 
     // Tính tổng — tách riêng 4 loại giao dịch
     let totalIn   = 0, totalOut  = 0;
@@ -6914,12 +6935,55 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
 
   // ---- Khởi tạo sự kiện ----
   function init() {
-    // Gắn sự kiện tab lọc kỳ
+    const yearSel = document.getElementById('cfYearPick');
+    const monthSel = document.getElementById('cfMonthPick');
+    const pickerRow = document.getElementById('cfPickerRow');
+    
+    // 1. Populate năm từ dữ liệu
+    const allTxs = getTransactions();
+    const years = new Set();
+    allTxs.forEach(tx => {
+      if (tx.date) years.add(new Date(tx.date).getFullYear());
+    });
+    years.add(new Date().getFullYear()); // Luôn có năm hiện tại
+    const sortedYears = Array.from(years).sort((a,b) => b - a);
+
+    if (yearSel) {
+      yearSel.innerHTML = sortedYears.map(y => `<option value="${y}">Năm ${y}</option>`).join('');
+      yearSel.value = _selectedYear;
+      yearSel.addEventListener('change', () => {
+        _selectedYear = parseInt(yearSel.value, 10);
+        render();
+      });
+    }
+    
+    if (monthSel) {
+      monthSel.value = _selectedMonth;
+      monthSel.addEventListener('change', () => {
+        _selectedMonth = parseInt(monthSel.value, 10);
+        render();
+      });
+    }
+
+    // Cập nhật hiển thị picker ban đầu
+    const updatePickerUI = () => {
+      if (!pickerRow || !monthSel) return;
+      if (_activeMode === 'all') {
+        pickerRow.classList.add('hidden');
+      } else {
+        pickerRow.classList.remove('hidden');
+        monthSel.style.display = _activeMode === 'year' ? 'none' : '';
+      }
+    };
+    updatePickerUI();
+
+    // 2. Gắn sự kiện tab lọc kỳ
     document.querySelectorAll('.cf-tab').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('.cf-tab').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        _activePeriod = parseInt(btn.dataset.period, 10);
+        _activeMode = btn.dataset.mode;
+        updatePickerUI();
         render();
       });
     });

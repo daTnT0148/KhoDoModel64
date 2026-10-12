@@ -3669,6 +3669,38 @@ img {
 }
 .cf-title-icon { font-size: 20px; }
 
+.cf-controls-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.cf-picker-row {
+  display: flex;
+  gap: 6px;
+}
+.cf-picker-row.hidden {
+  display: none;
+}
+.cf-pick-sel {
+  background: #111827;
+  border: 1px solid var(--card-border);
+  border-radius: var(--border-radius-sm);
+  color: var(--text-white);
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+  font-family: var(--font-family);
+  cursor: pointer;
+}
+.cf-pick-sel option {
+  background: #111827;
+  color: #ffffff;
+}
+.cf-pick-sel:hover {
+  border-color: var(--primary-color);
+}
+
 /* Tabs lọc kỳ */
 .cf-tabs {
   display: flex;
