@@ -619,94 +619,95 @@ function calculateInventory(portfolioId) {
     }
   });
 
-  // Bước 2: Với mỗi xe, chạy FIFO để xác định:
-  //   - Giá vốn hàng đã bán (COGS) theo FIFO
-  //   - Các lô hàng còn tồn và giá vốn của chúng
+  // Bước 2: Với mỗi xe, tính giá vốn theo phương pháp Bình Quân Gia Quyền Di Động
+  //   (Moving Weighted Average Cost — BQGQ)
+  //   - Khi NHẬP: tính lại giá vốn bình quân = (giá trị tồn cũ + giá trị lô mới) / tổng SL
+  //   - Khi BÁN: giá vốn = SL bán × giá bình quân hiện tại, giá bình quân KHÔNG ĐỔI
   const inventoryList = [];
   const { fee, extra, operation } = state.feeSettings || { fee: 25, extra: 4620, operation: 5000 };
 
   for (const key in inventoryMap) {
     const item = inventoryMap[key];
 
-    // Sắp xếp lô mua theo ngày tăng dần (cũ nhất trước — FIFO)
-    const lots = item.buyLots
-      .slice()
-      .sort((a, b) => new Date(a.date) - new Date(b.date))
-      .map(l => ({ ...l, remaining: l.qty })); // remaining = số lượng lô chưa bán
-
-    // Tổng số mua / bán
-    const totalQtyBought = lots.reduce((s, l) => s + l.qty, 0);
+    // Tổng số mua / bán (hiển thị)
+    const totalQtyBought = item.buyLots.reduce((s, l) => s + l.qty, 0);
     const totalQtySold   = item.sells.reduce((s, s2) => s + s2.qty, 0);
     const stockLeft      = Math.max(0, totalQtyBought - totalQtySold);
 
-    // Sắp xếp lần bán theo ngày (để tính FIFO đúng thứ tự)
-    const sellsSorted = item.sells.slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+    // --- Gộp buy + sell thành timeline, sắp theo ngày (cùng ngày: nhập trước, bán sau) ---
+    const events = [];
+    item.buyLots.forEach(lot => {
+      if (lot.qty > 0) events.push({ type: 'buy', qty: lot.qty, unitCost: lot.unitCost, date: lot.date });
+    });
+    item.sells.forEach(sell => {
+      if (sell.qty > 0) events.push({ type: 'sell', qty: sell.qty, unitPrice: sell.unitPrice, date: sell.date, originalTx: sell.originalTx });
+    });
+    events.sort((a, b) => {
+      const diff = new Date(a.date) - new Date(b.date);
+      if (diff !== 0) return diff;
+      return a.type === 'buy' ? -1 : 1; // Cùng ngày: nhập trước, bán sau
+    });
 
-    // Chạy FIFO: trừ lần lượt từng lô mua cũ nhất cho mỗi lần bán
-    let totalCOGS = 0; // tổng giá vốn hàng đã bán (theo FIFO)
-    let lotIdx = 0;
+    // --- Chạy Moving Weighted Average ---
+    let runQty     = 0;   // SL tồn kho hiện tại trong timeline
+    let runAvgCost = 0;   // Giá vốn bình quân hiện tại
+    let totalCOGS  = 0;   // Tổng giá vốn hàng đã bán
 
-    for (const sell of sellsSorted) {
-      let qtyToSell = sell.qty;
-      let sellTotalCOGS = 0; // Giá vốn của riêng lần bán này
+    for (const evt of events) {
+      if (evt.type === 'buy') {
+        // Nhập hàng → tính lại giá vốn bình quân
+        const newTotalValue = runQty * runAvgCost + evt.qty * evt.unitCost;
+        runQty     += evt.qty;
+        runAvgCost  = runQty > 0 ? newTotalValue / runQty : 0;
+      } else {
+        // Bán hàng → COGS = SL × bình quân hiện tại, bình quân KHÔNG ĐỔI
+        totalCOGS += evt.qty * runAvgCost;
+        runQty     = Math.max(0, runQty - evt.qty);
+        // runAvgCost giữ nguyên — đặc trưng của Bình Quân Gia Quyền
 
-      while (qtyToSell > 0 && lotIdx < lots.length) {
-        const lot = lots[lotIdx];
-        const take = Math.min(lot.remaining, qtyToSell);
-
-        totalCOGS      += take * lot.unitCost;
-        sellTotalCOGS  += take * lot.unitCost;
-        lot.remaining  -= take;
-        qtyToSell      -= take;
-
-        if (lot.remaining === 0) lotIdx++;
-      }
-      
-      // Tính giá vốn trung bình cho 1 chiếc của đơn bán này và lưu lại vào giao dịch gốc
-      if (sell.qty > 0 && sell.originalTx) {
-        sell.originalTx.fifoAvgCost = sellTotalCOGS / sell.qty;
+        // Gán giá vốn bình quân vào giao dịch bán gốc (Cash Flow widget + lịch sử dùng)
+        if (evt.qty > 0 && evt.originalTx) {
+          evt.originalTx.fifoAvgCost = runAvgCost; // Giữ tên property cũ để tương thích
+        }
       }
     }
 
-    // Giá vốn hàng còn tồn = tổng (remaining * unitCost) của các lô chưa bán hết
-    let remainingCost = 0;
-    let remainingQty  = 0;
-    for (const lot of lots) {
-      if (lot.remaining > 0) {
-        remainingCost += lot.remaining * lot.unitCost;
-        remainingQty  += lot.remaining;
-      }
+    // Giá vốn bình quân cuối cùng = giá vốn của hàng tồn kho
+    const avgCost       = runAvgCost;
+    const remainingCost = stockLeft * avgCost;
+
+    // --- Tính ngày nhập lô tồn cũ nhất (dùng FIFO thuần cho tuổi hàng, không ảnh hưởng giá vốn) ---
+    const lotsSorted = item.buyLots.slice()
+      .sort((a, b) => new Date(a.date) - new Date(b.date))
+      .map(l => ({ ...l, remaining: l.qty }));
+    let ageQtyToSell = totalQtySold;
+    for (const lot of lotsSorted) {
+      const take = Math.min(lot.remaining, ageQtyToSell);
+      lot.remaining -= take;
+      ageQtyToSell  -= take;
+      if (ageQtyToSell <= 0) break;
     }
-
-    // avgCost = giá vốn TB của hàng CÒN TỒN (không phải toàn bộ lịch sử)
-    const avgCost = remainingQty > 0 ? remainingCost / remainingQty : 0;
-
-    // Lợi nhuận ròng = doanh thu - COGS (FIFO) - khoản lỗ kèm theo trả hàng (ship, bao bì...)
-    const realizedProfit = item.totalRevenue - totalCOGS - item.totalReturnLoss;
-
-    // Giá trị tồn kho theo giá vốn thực tế còn lại
-    const stockValue = remainingCost;
-
-    // ROI = lợi nhuận / COGS (theo FIFO)
-    const roi = totalCOGS > 0 ? (realizedProfit / totalCOGS) * 100 : 0;
-
-    // Giá hòa vốn Shopee tính từ giá vốn TB của hàng tồn hiện tại
-    const breakEvenPrice = avgCost > 0
-      ? (avgCost + extra + operation) / (1 - fee / 100)
-      : 0;
-
-    // Tổng chi phí mua (dùng để hiển thị "Tổng chi phí" trong bảng)
-    // Trừ thêm khoản đã hoàn tiền từ NCC mà KHÔNG hoàn hàng về kho (vẫn được ghi nhận là tiền đã lấy lại)
-    const totalBuyCost = lots.reduce((s, l) => s + l.qty * l.unitCost, 0) - (item.totalReturnBuyCostCredit || 0);
-
     let oldestStockDate = null;
-    const remainingLots = lots.filter(l => l.remaining > 0);
+    const remainingLots = lotsSorted.filter(l => l.remaining > 0);
     if (remainingLots.length > 0) {
       oldestStockDate = remainingLots.reduce((min, lot) => {
         const d = (typeof parseDMYToLocalDate === "function") ? parseDMYToLocalDate(lot.date) : new Date(lot.date);
         return (!min || d < min) ? d : min;
       }, null);
     }
+
+    // Lợi nhuận ròng = doanh thu - COGS (bình quân) - khoản lỗ kèm theo trả hàng
+    const realizedProfit = item.totalRevenue - totalCOGS - item.totalReturnLoss;
+    const stockValue     = remainingCost;
+    const roi            = totalCOGS > 0 ? (realizedProfit / totalCOGS) * 100 : 0;
+
+    // Giá hòa vốn Shopee tính từ giá vốn bình quân
+    const breakEvenPrice = avgCost > 0
+      ? (avgCost + extra + operation) / (1 - fee / 100)
+      : 0;
+
+    // Tổng chi phí mua (trừ khoản NCC đã hoàn tiền mà không hoàn hàng)
+    const totalBuyCost = item.buyLots.reduce((s, l) => s + l.qty * l.unitCost, 0) - (item.totalReturnBuyCostCredit || 0);
 
     inventoryList.push({
       modelName:      item.modelName,
@@ -716,17 +717,17 @@ function calculateInventory(portfolioId) {
       stock:          stockLeft,
       totalBought:    totalQtyBought,
       totalSold:      totalQtySold,
-      avgCost:        avgCost,        // ← giá vốn TB của hàng TỒN (FIFO)
-      historicalAvgCost: totalQtyBought > 0 ? totalBuyCost / totalQtyBought : 0, // ← giá vốn TB lịch sử
-      totalBuyCost:   totalBuyCost,   // ← tổng chi phí đã bỏ ra
+      avgCost:        avgCost,        // ← giá vốn bình quân gia quyền
+      historicalAvgCost: totalQtyBought > 0 ? totalBuyCost / totalQtyBought : 0,
+      totalBuyCost:   totalBuyCost,
       totalRevenue:   item.totalRevenue,
-      realizedProfit: realizedProfit, // ← lợi nhuận theo FIFO (đã trừ khoản lỗ trả hàng nếu có)
-      totalReturnLoss: item.totalReturnLoss, // ← tổng khoản lỗ kèm theo trả hàng (ship, bao bì...)
-      stockValue:     stockValue,     // ← giá trị tồn theo FIFO
-      roi:            roi,            // ← ROI theo FIFO
+      realizedProfit: realizedProfit,  // ← lợi nhuận theo BQGQ
+      totalReturnLoss: item.totalReturnLoss,
+      stockValue:     stockValue,      // ← giá trị tồn theo BQGQ
+      roi:            roi,
       txCount:        item.transactions.length,
-      breakEvenPrice: breakEvenPrice, // ← hòa vốn Shopee theo giá vốn tồn
-      oldestStockDate: oldestStockDate // ← ngày nhập của lô tồn cũ nhất
+      breakEvenPrice: breakEvenPrice,
+      oldestStockDate: oldestStockDate
     });
   }
 
@@ -750,7 +751,7 @@ function calculateKPIs(inventory, portfolioId) {
     totalCost           += item.totalBuyCost;
     totalRevenue        += item.totalRevenue;
     totalReturnLoss      += Number(item.totalReturnLoss || 0);
-    // realizedProfit = totalRevenue - COGS - totalReturnLoss (đã tính đúng theo FIFO trong calculateInventory)
+    // realizedProfit = totalRevenue - COGS - totalReturnLoss (đã tính đúng theo BQGQ trong calculateInventory)
     // => COGS thực = totalRevenue - realizedProfit - totalReturnLoss
     totalCOGS  += (item.totalRevenue - item.realizedProfit - Number(item.totalReturnLoss || 0));
     soldCount  += item.totalSold;
@@ -774,7 +775,7 @@ function calculateKPIs(inventory, portfolioId) {
 
 /**
  * Tính toán số liệu phân tách theo từng năm để phục vụ biểu đồ và bảng báo cáo.
- * Dùng FIFO để tính COGS từng năm: với mỗi giao dịch bán, lấy giá vốn từ lô mua cũ nhất còn lại.
+ * Dùng Bình Quân Gia Quyền để tính COGS từng năm.
  */
 function calculateYearlyStats(portfolioId, inventoryList) {
   const txs = state.transactions[portfolioId] || [];
@@ -783,7 +784,7 @@ function calculateYearlyStats(portfolioId, inventoryList) {
   // gốc (không phải năm trả hàng) — vì bản chất đây là điều chỉnh giảm cho giao dịch đó.
   const returnedMap = computeReturnedQtyMap(txs);
 
-  // Gom nhóm theo xe, chạy FIFO để gán fifoUnitCost cho từng giao dịch bán
+  // Gom nhóm theo xe, chạy Bình Quân Gia Quyền để gán avgUnitCost cho từng giao dịch bán
   const carMap = {};
   txs.forEach(tx => {
     const key = `${tx.modelName.trim().toLowerCase()}||${tx.brand.trim().toLowerCase()}||${(tx.color || "").trim().toLowerCase()}||${(tx.packaging || "").trim().toLowerCase()}`;
@@ -794,39 +795,38 @@ function calculateYearlyStats(portfolioId, inventoryList) {
     }
     if (tx.type === "sell") {
       const restockReturned = returnedMap.restock[tx.id] || 0;
-      // fifoQty: số lượng thực tế được FIFO tiêu thụ khỏi kho (KHÔNG hoàn kho vẫn tính là đã tiêu thụ)
       carMap[key].sells.push({ ...tx, qty: Math.max(0, Number(tx.qty) - restockReturned), unitPrice: Number(tx.unitPrice) });
     }
   });
 
-  // Map txId -> fifoUnitCost để tra khi duyệt yearly
-  const fifoSellCostMap = {};
+  // Map txId -> avgUnitCost (bình quân gia quyền tại thời điểm bán)
+  const avgSellCostMap = {};
 
   for (const key in carMap) {
     const { buys, sells } = carMap[key];
-    const lots = buys
-      .slice()
-      .sort((a, b) => new Date(a.date) - new Date(b.date))
-      .map(b => ({ unitCost: b.unitCost, remaining: b.qty }));
 
-    const sellsSorted = sells.slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+    // Gộp timeline buy + sell, sắp theo ngày (cùng ngày: nhập trước, bán sau)
+    const events = [];
+    buys.forEach(b => { if (b.qty > 0) events.push({ type: 'buy', ...b }); });
+    sells.forEach(s => { if (s.qty > 0) events.push({ type: 'sell', ...s }); });
+    events.sort((a, b) => {
+      const diff = new Date(a.date) - new Date(b.date);
+      if (diff !== 0) return diff;
+      return a.type === 'buy' ? -1 : 1;
+    });
 
-    for (const sell of sellsSorted) {
-      let qtyLeft = sell.qty;
-      let totalCost = 0;
-      let lotIdx = 0;
-
-      while (qtyLeft > 0 && lotIdx < lots.length) {
-        const lot = lots[lotIdx];
-        const take = Math.min(lot.remaining, qtyLeft);
-        totalCost    += take * lot.unitCost;
-        lot.remaining -= take;
-        qtyLeft      -= take;
-        if (lot.remaining === 0) lotIdx++;
+    // Moving Weighted Average
+    let runQty = 0, runAvgCost = 0;
+    for (const evt of events) {
+      if (evt.type === 'buy') {
+        const newTotal = runQty * runAvgCost + evt.qty * evt.unitCost;
+        runQty += evt.qty;
+        runAvgCost = runQty > 0 ? newTotal / runQty : 0;
+      } else {
+        avgSellCostMap[evt.id] = runAvgCost; // Giá vốn bình quân tại thời điểm bán
+        runQty = Math.max(0, runQty - evt.qty);
+        // runAvgCost giữ nguyên
       }
-
-      // avgUnitCost cho giao dịch bán này theo FIFO
-      fifoSellCostMap[sell.id] = sell.qty > 0 ? totalCost / sell.qty : 0;
     }
   }
 
@@ -853,11 +853,11 @@ function calculateYearlyStats(portfolioId, inventoryList) {
     } else if (tx.type === "sell") {
       const restockReturned = returnedMap.restock[tx.id] || 0;
       const noRestockReturned = returnedMap.noRestock[tx.id] || 0;
-      const fifoQty    = Math.max(0, Number(tx.qty) - restockReturned); // số lượng thực tế tiêu thụ khỏi kho (dùng tính COGS)
-      const revenueQty = Math.max(0, Number(tx.qty) - restockReturned - noRestockReturned); // số lượng dùng tính doanh thu
+      const fifoQty    = Math.max(0, Number(tx.qty) - restockReturned);
+      const revenueQty = Math.max(0, Number(tx.qty) - restockReturned - noRestockReturned);
       const rev               = revenueQty * Number(tx.unitPrice);
-      const fifoUnitCost      = fifoSellCostMap[tx.id] || 0;
-      const costOfThisSell    = fifoQty * fifoUnitCost;
+      const avgUnitCost       = avgSellCostMap[tx.id] || 0;
+      const costOfThisSell    = fifoQty * avgUnitCost;
 
       yearlyData[year].revenue  += rev;
       yearlyData[year].cogs     += costOfThisSell;
@@ -1595,8 +1595,8 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
         </div>
       `;
     } else {
-      // Bán: Hiển thị kênh bán + Lợi nhuận của đơn bán này dựa trên giá mua trung bình FIFO tại thời điểm bán
-      // fifoAvgCost được tính chính xác trong calculateInventory()
+      // Bán: Hiển thị kênh bán + Lợi nhuận dựa trên giá vốn bình quân gia quyền tại thời điểm bán
+      // fifoAvgCost (tên cũ, thực chất là avgCost bình quân gia quyền) được tính trong calculateInventory()
       const avgCost = tx.fifoAvgCost || 0; 
       // Lợi nhuận thực tế luôn tính trên unitPrice thực nhận (không phải giá khai Shopee)
       const actualUnitPrice = Number(tx.unitPrice);
@@ -1606,7 +1606,7 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
         <div style="display:flex; flex-direction:column;">
           <span class="badge badge-in-stock" style="align-self: flex-start; margin-bottom: 2px;">Kênh: ${tx.channel}</span>
           ${isShopee && tx.taxUnitPrice ? `<span style="font-size:10px;color:var(--text-muted);">Giá thực nhận: ${formatCurrency(actualUnitPrice)}</span>` : ''}
-          ${avgCost > 0 ? `<span style="font-size:10px;color:var(--text-muted);">Giá vốn (FIFO): ${formatCurrency(avgCost)}</span>` : ''}
+          ${avgCost > 0 ? `<span style="font-size:10px;color:var(--text-muted);">Giá vốn (BQ): ${formatCurrency(avgCost)}</span>` : ''}
           <span style="font-size:11px;" class="${profitFromThisTx >= 0 ? 'text-green' : 'text-danger'}">
             Lời: ${formatCurrency(profitFromThisTx)}
           </span>
@@ -3952,7 +3952,7 @@ function setupInteractiveFilters() {
 function calculatePeriodProfits(portfolioId, inventoryList) {
   const txs = state.transactions[portfolioId] || [];
 
-  // Tạo map giá vốn FIFO cho từng giao dịch bán
+  // Tạo map giá vốn bình quân gia quyền cho từng giao dịch bán
   const carMap = {};
   txs.forEach(tx => {
     const key = `${tx.modelName.trim().toLowerCase()}||${tx.brand.trim().toLowerCase()}||${(tx.color || "").trim().toLowerCase()}||${(tx.packaging || "").trim().toLowerCase()}`;
@@ -3961,25 +3961,27 @@ function calculatePeriodProfits(portfolioId, inventoryList) {
     if (tx.type === "sell") carMap[key].sells.push({ ...tx, qty: Number(tx.qty), unitPrice: Number(tx.unitPrice) });
   });
 
-  const fifoSellCostMap = {};
+  const avgSellCostMap = {};
   for (const key in carMap) {
     const { buys, sells } = carMap[key];
-    const lots = buys.slice().sort((a, b) => new Date(a.date) - new Date(b.date)).map(b => ({ unitCost: b.unitCost, remaining: b.qty }));
-    const sellsSorted = sells.slice().sort((a, b) => new Date(a.date) - new Date(b.date));
-
-    for (const sell of sellsSorted) {
-      let qtyLeft = sell.qty;
-      let totalCost = 0;
-      let lotIdx = 0;
-      while (qtyLeft > 0 && lotIdx < lots.length) {
-        const lot = lots[lotIdx];
-        const take = Math.min(lot.remaining, qtyLeft);
-        totalCost += take * lot.unitCost;
-        lot.remaining -= take;
-        qtyLeft -= take;
-        if (lot.remaining === 0) lotIdx++;
+    const events = [];
+    buys.forEach(b => { if (b.qty > 0) events.push({ type: 'buy', ...b }); });
+    sells.forEach(s => { if (s.qty > 0) events.push({ type: 'sell', ...s }); });
+    events.sort((a, b) => {
+      const diff = new Date(a.date) - new Date(b.date);
+      if (diff !== 0) return diff;
+      return a.type === 'buy' ? -1 : 1;
+    });
+    let runQty = 0, runAvgCost = 0;
+    for (const evt of events) {
+      if (evt.type === 'buy') {
+        const newTotal = runQty * runAvgCost + evt.qty * evt.unitCost;
+        runQty += evt.qty;
+        runAvgCost = runQty > 0 ? newTotal / runQty : 0;
+      } else {
+        avgSellCostMap[evt.id] = runAvgCost;
+        runQty = Math.max(0, runQty - evt.qty);
       }
-      fifoSellCostMap[sell.id] = sell.qty > 0 ? totalCost / sell.qty : 0;
     }
   }
 
@@ -3988,7 +3990,7 @@ function calculatePeriodProfits(portfolioId, inventoryList) {
   today.setHours(0, 0, 0, 0);
 
   // Lấy Thứ Hai của tuần hiện tại làm mốc bắt đầu tuần
-  const dayOfWeek = today.getDay(); // 0 là Chủ Nhật, 1 là Thứ Hai...
+  const dayOfWeek = today.getDay();
   const diffToMonday = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
   const startOfWeek = new Date(today);
   startOfWeek.setDate(diffToMonday);
@@ -4012,13 +4014,12 @@ function calculatePeriodProfits(portfolioId, inventoryList) {
   txs.filter(tx => tx.type === "sell").forEach(tx => {
     if (!tx.date) return;
     
-    // Cắt chuỗi ngày để tránh bị timezone shift
     const parts = tx.date.split("-");
     const txDate = new Date(parts[0], parts[1] - 1, parts[2]);
     txDate.setHours(0, 0, 0, 0);
 
-    const fifoUnitCost = fifoSellCostMap[tx.id] || 0;
-    const profit = Number(tx.qty) * (Number(tx.unitPrice) - fifoUnitCost);
+    const avgUnitCost = avgSellCostMap[tx.id] || 0;
+    const profit = Number(tx.qty) * (Number(tx.unitPrice) - avgUnitCost);
 
     const timeTx = txDate.getTime();
 
@@ -4104,8 +4105,7 @@ function drawProfitTrendChart(portfolioId, inventoryList) {
 
   const txs = state.transactions[portfolioId] || [];
   
-  // TÍNH FIFO CHO CÁC GIAO DỊCH BÁN — dùng returnedQtyMap để trừ đúng số lượng trả hàng
-  // giống calculateInventory, tránh fifoUnitCost = 0 khi khách trả rồi bán lại lần sau
+  // TÍNH BÌNH QUÂN GIA QUYỀN CHO CÁC GIAO DỊCH BÁN — dùng returnedQtyMap để trừ đúng số lượng trả hàng
   const returnedMap4Chart = computeReturnedQtyMap(txs);
 
   const carMap = {};
@@ -4113,38 +4113,38 @@ function drawProfitTrendChart(portfolioId, inventoryList) {
     const key = `${tx.modelName.trim().toLowerCase()}||${tx.brand.trim().toLowerCase()}||${(tx.color || "").trim().toLowerCase()}||${(tx.packaging || "").trim().toLowerCase()}`;
     if (!carMap[key]) carMap[key] = { buys: [], sells: [] };
     if (tx.type === "buy") {
-      // Trừ số lượng đã hoàn kho về NCC (return_buy có restockToInventory=true)
       const restockReturned = returnedMap4Chart.restock[tx.id] || 0;
       const effectiveQty = Math.max(0, Number(tx.qty) - restockReturned);
       if (effectiveQty > 0) carMap[key].buys.push({ ...tx, qty: effectiveQty, unitCost: Number(tx.unitCost) });
     }
     if (tx.type === "sell") {
-      // Chỉ tính vào FIFO phần số lượng chưa được khách hoàn kho lại
       const restockReturned = returnedMap4Chart.restock[tx.id] || 0;
       const fifoQty = Math.max(0, Number(tx.qty) - restockReturned);
       if (fifoQty > 0) carMap[key].sells.push({ ...tx, qty: fifoQty, unitPrice: Number(tx.unitPrice) });
     }
   });
 
-  const fifoSellCostMap = {};
+  const avgSellCostMap = {};
   for (const key in carMap) {
     const { buys, sells: carSells } = carMap[key];
-    const lots = buys.slice().sort((a, b) => parseDMYToLocalDate(a.date).getTime() - parseDMYToLocalDate(b.date).getTime()).map(b => ({ unitCost: b.unitCost, remaining: b.qty }));
-    const sellsSorted = carSells.slice().sort((a, b) => parseDMYToLocalDate(a.date).getTime() - parseDMYToLocalDate(b.date).getTime());
-
-    for (const sell of sellsSorted) {
-      let qtyLeft = sell.qty;
-      let totalCost = 0;
-      let lotIdx = 0;
-      while (qtyLeft > 0 && lotIdx < lots.length) {
-        const lot = lots[lotIdx];
-        const take = Math.min(lot.remaining, qtyLeft);
-        totalCost += take * lot.unitCost;
-        lot.remaining -= take;
-        qtyLeft -= take;
-        if (lot.remaining === 0) lotIdx++;
+    const events = [];
+    buys.forEach(b => { if (b.qty > 0) events.push({ type: 'buy', ...b }); });
+    carSells.forEach(s => { if (s.qty > 0) events.push({ type: 'sell', ...s }); });
+    events.sort((a, b) => {
+      const diff = new Date(a.date) - new Date(b.date);
+      if (diff !== 0) return diff;
+      return a.type === 'buy' ? -1 : 1;
+    });
+    let runQty = 0, runAvgCost = 0;
+    for (const evt of events) {
+      if (evt.type === 'buy') {
+        const newTotal = runQty * runAvgCost + evt.qty * evt.unitCost;
+        runQty += evt.qty;
+        runAvgCost = runQty > 0 ? newTotal / runQty : 0;
+      } else {
+        avgSellCostMap[evt.id] = runAvgCost;
+        runQty = Math.max(0, runQty - evt.qty);
       }
-      fifoSellCostMap[sell.id] = sell.qty > 0 ? totalCost / sell.qty : 0;
     }
   }
 
@@ -4159,11 +4159,10 @@ function drawProfitTrendChart(portfolioId, inventoryList) {
   const profitGroups = {};
 
   sells.forEach(tx => {
-    const fifoUnitCost = fifoSellCostMap[tx.id] || 0;
-    // fifoQty: số lượng thực sự đã tiêu thụ sau khi trừ hoàn kho (cùng logic với carMap)
+    const avgUnitCost = avgSellCostMap[tx.id] || 0;
     const restockReturned = returnedMap4Chart.restock[tx.id] || 0;
     const fifoQty = Math.max(0, Number(tx.qty) - restockReturned);
-    const profit = fifoQty * (Number(tx.unitPrice) - fifoUnitCost);
+    const profit = fifoQty * (Number(tx.unitPrice) - avgUnitCost);
     const dateObj = parseDMYToLocalDate(tx.date);
     dateObj.setHours(0, 0, 0, 0);
 
