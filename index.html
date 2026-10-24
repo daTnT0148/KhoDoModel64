@@ -132,6 +132,13 @@
             </a>
           </li>
           <li>
+            <a href="#" class="nav-link" data-tab="tracking">
+              <i data-lucide="truck"></i>
+              <span>Theo dõi vận đơn</span>
+              <span class="tracking-badge hidden" id="trackingNavBadge">0</span>
+            </a>
+          </li>
+          <li>
             <a href="#" class="nav-link" data-tab="reports">
               <i data-lucide="calendar"></i>
               <span>Báo cáo năm</span>
@@ -211,6 +218,22 @@
           <h1 id="pageTitle">Tổng quan</h1>
         </div>
         <div class="nav-right">
+          <!-- Tracking Status Indicators (🟡 Đang giao · 🟢 Thành công hôm nay · 🔴 Trả về/Hủy) -->
+          <div class="nav-tracking-indicators" id="navTrackingDots" title="Vận đơn SPX: Vàng (Đang giao) · Xanh (Giao thành công hôm nay) · Đỏ (Trả về/Lỗi/Hủy)">
+            <div class="tracking-dot-group dot-yellow" title="Đang giao hàng">
+              <span class="tracking-dot"></span>
+              <span class="tracking-dot-count" id="dotCountActive">0</span>
+            </div>
+            <div class="tracking-dot-group dot-green" title="Giao thành công hôm nay">
+              <span class="tracking-dot"></span>
+              <span class="tracking-dot-count" id="dotCountSuccess">0</span>
+            </div>
+            <div class="tracking-dot-group dot-red" title="Giao không thành công / Bị trả về">
+              <span class="tracking-dot"></span>
+              <span class="tracking-dot-count" id="dotCountFailed">0</span>
+            </div>
+          </div>
+
           <!-- Currency Switcher -->
           <div class="currency-switcher">
             <label for="currencySelect"><i data-lucide="coins"></i> Tiền tệ:</label>
@@ -810,6 +833,11 @@
                   <textarea id="sellNotes" rows="2" placeholder="Ví dụ: Khách thanh toán COD, freeship..."></textarea>
                 </div>
 
+                <div class="form-group" id="sellTrackingGroup">
+                  <label for="sellTrackingNumber">Mã vận đơn SPX <span class="text-muted">(không bắt buộc)</span></label>
+                  <input type="text" id="sellTrackingNumber" placeholder="VD: SPXVN04..." autocomplete="off">
+                </div>
+
                 <button type="submit" class="btn btn-orange btn-block">
                   <i data-lucide="shopping-bag"></i> Ghi nhận giao dịch bán
                 </button>
@@ -890,6 +918,7 @@
             <div class="card-header-actions">
               <h3>Lịch sử giao dịch chi tiết (Mua & Bán)</h3>
               <div class="header-filters">
+                <input type="text" id="historySearchInput" placeholder="Tìm tên xe, mã vận đơn..." style="max-width:200px;">
                 <select id="historyFilterYear">
                   <option value="all">Tất cả các năm</option>
                   <!-- Nạp động qua JS -->
@@ -937,6 +966,50 @@
           </div>
 
         </section>
+
+      <!-- ═══════════════════════════════════════════════════════════════════ -->
+      <!-- TAB: THEO DÕI VẬN ĐƠN                                           -->
+      <!-- ═══════════════════════════════════════════════════════════════════ -->
+      <section class="panel" id="panel-tracking">
+        <div class="dashboard-header">
+          <h2><i data-lucide="truck"></i> Theo dõi vận đơn</h2>
+          <p>Theo dõi trạng thái giao hàng của các đơn SPX Express.</p>
+        </div>
+
+        <!-- Bộ lọc và nút cập nhật -->
+        <div class="filter-bar" id="trackingFilterBar">
+          <div class="filter-controls">
+            <select id="trackingFilterStatus">
+              <option value="active" selected>🚚 Đang xử lý</option>
+              <option value="completed">✅ Đã kết thúc</option>
+            </select>
+            <input type="text" id="trackingSearchInput" placeholder="Tìm theo tên xe, mã vận đơn...">
+          </div>
+          <button class="btn btn-primary btn-sm" id="trackingRefreshAllBtn" title="Cập nhật tất cả đơn đang xử lý">
+            <i data-lucide="refresh-cw"></i>
+            <span>Cập nhật tất cả</span>
+          </button>
+        </div>
+
+        <!-- Trạng thái đang tải -->
+        <div id="trackingLoadingState" class="hidden" style="text-align:center; padding:40px 20px;">
+          <div class="loading-spinner"></div>
+          <p class="text-muted" style="margin-top:12px;">Đang kiểm tra trạng thái vận đơn...</p>
+        </div>
+
+        <!-- Danh sách vận đơn -->
+        <div id="trackingListContainer"></div>
+
+        <!-- Trạng thái trống -->
+        <div id="trackingEmptyState" class="hidden" style="text-align:center; padding:60px 20px;">
+          <i data-lucide="package-check" style="width:48px; height:48px; color:var(--text-muted); margin-bottom:16px;"></i>
+          <h3 style="color:var(--text-main); margin-bottom:8px;">Chưa có vận đơn nào</h3>
+          <p class="text-muted">Thêm mã vận đơn SPX khi tạo giao dịch bán để theo dõi tại đây.</p>
+        </div>
+
+        <!-- Kết quả cập nhật -->
+        <div id="trackingRefreshResult" class="hidden" style="padding:12px 16px; border-radius:var(--border-radius-sm); margin-top:12px;"></div>
+      </section>
 
         <!-- ================= PANEL 4: REPORTS ================= -->
         <section class="panel" id="panel-reports">
@@ -1317,6 +1390,11 @@
         <div class="form-group">
           <label for="editTxNotes">Ghi chú (Tùy chọn)</label>
           <textarea id="editTxNotes" rows="2" placeholder="Chi tiết giao dịch..."></textarea>
+        </div>
+
+        <div class="form-group hidden" id="editTxTrackingGroup">
+          <label for="editTxTrackingNumber">Mã vận đơn SPX</label>
+          <input type="text" id="editTxTrackingNumber" placeholder="VD: SPXVN04..." autocomplete="off">
         </div>
 
         <!-- Trả hàng: chỉ hiện khi sửa giao dịch return_buy/return_sell -->

@@ -62,6 +62,7 @@ let state = {
     ]
   }
 };
+window.state = state;
 
 // Lưu các biến tham chiếu đến biểu đồ Chart.js để huỷ trước khi vẽ lại
 let charts = {
@@ -444,6 +445,7 @@ function loadStateFromLocalStorage() {
       // Đảm bảo dữ liệu tải lên có đủ cấu trúc cần thiết
       if (parsed.portfolios && parsed.activePortfolioId && parsed.transactions) {
         state = parsed;
+        window.state = state;
         // Đảm bảo tỷ giá tiền tệ hợp lệ
         if (!state.currency) state.currency = "VND";
         // Đảm bảo cấu hình phí Shopee hợp lệ (cho dữ liệu cũ chưa có trường này)
@@ -1521,6 +1523,18 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
     txs = txs.filter(tx => (tx.type === "sell" || tx.type === "return_sell") && tx.channel === filterChannel);
   }
 
+  // Lọc theo từ khóa tìm kiếm (tên xe, hãng, ghi chú, mã vận đơn)
+  const historySearchEl = document.getElementById("historySearchInput");
+  const historySearch = historySearchEl ? historySearchEl.value.toLowerCase().trim() : "";
+  if (historySearch) {
+    txs = txs.filter(tx =>
+      tx.modelName.toLowerCase().includes(historySearch) ||
+      tx.brand.toLowerCase().includes(historySearch) ||
+      (tx.notes || "").toLowerCase().includes(historySearch) ||
+      (tx.trackingNumber || "").toLowerCase().includes(historySearch)
+    );
+  }
+
   // Sắp xếp theo ngày theo lựa chọn (mới nhất / cũ nhất)
   const sortedTxs = [...txs].sort((a, b) => {
     const diff = new Date(a.date) - new Date(b.date);
@@ -1610,6 +1624,7 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
           <span style="font-size:11px;" class="${profitFromThisTx >= 0 ? 'text-green' : 'text-danger'}">
             Lời: ${formatCurrency(profitFromThisTx)}
           </span>
+          ${tx.trackingNumber ? `<span style="font-size:10px;color:var(--text-muted);margin-top:2px;"><i data-lucide="truck" style="width:10px;height:10px;display:inline;vertical-align:middle;"></i> ${tx.trackingNumber}</span>` : ''}
         </div>
       `;
     }
@@ -2184,6 +2199,11 @@ function setupTabNavigation() {
       if (targetTab === "tax-info") renderTaxInfo();
       if (targetTab === "tax-declarations") renderTaxDeclarations();
       if (targetTab === "tax-config") renderTaxConfig();
+
+      // Render tracking panel khi chuyển sang tab Theo dõi vận đơn
+      if (targetTab === "tracking" && typeof window.TrackingModule !== "undefined") {
+        window.TrackingModule.render();
+      }
 
       // Cập nhật lại biểu đồ khi chuyển tab để tránh lỗi hiển thị kích thước
       triggerChartsRefresh();
@@ -3161,6 +3181,9 @@ function setupFormSubmissions() {
       }
     }
 
+    // Mã vận đơn SPX (không bắt buộc)
+    const trackingNumber = (document.getElementById("sellTrackingNumber").value || "").trim();
+
     const newTx = {
       id: generateUniqueId("tx"),
       type: "sell",
@@ -3176,6 +3199,7 @@ function setupFormSubmissions() {
       channel,
       notes
     };
+    if (trackingNumber) newTx.trackingNumber = trackingNumber;
 
     state.transactions[state.activePortfolioId].push(newTx);
     dbSaveTransaction(newTx);
@@ -3944,6 +3968,15 @@ function setupInteractiveFilters() {
       renderTransactionHistoryTable(state.activePortfolioId, inventory);
     });
   }
+
+  // Tìm kiếm theo từ khóa trong lịch sử giao dịch
+  const historySearchEl = document.getElementById("historySearchInput");
+  if (historySearchEl) {
+    historySearchEl.addEventListener("input", () => {
+      const inventory = calculateInventory(state.activePortfolioId);
+      renderTransactionHistoryTable(state.activePortfolioId, inventory);
+    });
+  }
 }
 
 // --- BIỂU ĐỒ LỢI NHUẬN THỜI GIAN & MODAL CHỈNH SỬA ---
@@ -4399,6 +4432,19 @@ function openEditTxModal(txId) {
 
   document.getElementById("editTxNotes").value = tx.notes || "";
 
+  // Mã vận đơn SPX: chỉ hiện cho giao dịch bán, nạp giá trị đã lưu
+  const trackingGroup = document.getElementById("editTxTrackingGroup");
+  const trackingInput = document.getElementById("editTxTrackingNumber");
+  if (trackingGroup && trackingInput) {
+    if (tx.type === "sell") {
+      trackingGroup.classList.remove("hidden");
+      trackingInput.value = tx.trackingNumber || "";
+    } else {
+      trackingGroup.classList.add("hidden");
+      trackingInput.value = "";
+    }
+  }
+
   // Hiện Modal
   document.getElementById("editTxModal").classList.remove("hidden");
   lucide.createIcons();
@@ -4522,6 +4568,16 @@ function setupEditTxModalHandlers() {
     }
     txs[txIndex].notes = notes;
     txs[txIndex].sku = generateSKU(brand, modelName, color, packaging);
+
+    // Cập nhật mã vận đơn SPX (chỉ cho giao dịch bán)
+    if (txType === "sell") {
+      const trackingVal = (document.getElementById("editTxTrackingNumber").value || "").trim();
+      if (trackingVal) {
+        txs[txIndex].trackingNumber = trackingVal;
+      } else {
+        delete txs[txIndex].trackingNumber; // Xóa nếu người dùng xóa mã
+      }
+    }
 
     dbUpdateTransaction(txs[txIndex]);
     closeEditTxModal();
@@ -6253,6 +6309,11 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // 3. Tính toán và làm tươi dữ liệu ban đầu
   refreshApplicationData();
+
+  // 4. Chủ động tự dò mã vận đơn SPX 1 lần khi vừa vào app để cập nhật 3 dấu chấm tròn trên Navbar
+  if (window.TrackingModule && typeof window.TrackingModule.autoCheckOnStartup === 'function') {
+    window.TrackingModule.autoCheckOnStartup();
+  }
 });
 
 // --- BOTTOM NAVIGATION (mobile) ---
@@ -6662,21 +6723,26 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
   // ---- Lọc giao dịch theo kỳ lịch dương (chỉ dùng dropdown) ----
   function filterByPeriod(txs) {
     if (_selectedYear === 0) return txs; // 0 = Tất cả các năm
+    const yStr = String(_selectedYear);
 
-    let start, end;
     if (_selectedMonth === 0) {
       // Cả năm
-      start = new Date(_selectedYear, 0, 1, 0, 0, 0, 0);
-      end   = new Date(_selectedYear, 11, 31, 23, 59, 59, 999);
-    } else {
-      // Tháng cụ thể
-      start = new Date(_selectedYear, _selectedMonth - 1, 1, 0, 0, 0, 0);
-      end   = new Date(_selectedYear, _selectedMonth, 0, 23, 59, 59, 999);
+      return txs.filter(tx => {
+        if (!tx.date) return false;
+        if (typeof tx.date === 'string' && tx.date.startsWith(yStr)) return true;
+        const d = new Date(tx.date);
+        return !isNaN(d) && d.getFullYear() === _selectedYear;
+      });
     }
 
+    // Tháng cụ thể
+    const mStr = _selectedMonth < 10 ? '0' + _selectedMonth : String(_selectedMonth);
+    const ymPrefix = `${yStr}-${mStr}`;
     return txs.filter(tx => {
-      const t = tx.date ? new Date(tx.date).getTime() : 0;
-      return t >= start.getTime() && t <= end.getTime();
+      if (!tx.date) return false;
+      if (typeof tx.date === 'string' && tx.date.startsWith(ymPrefix)) return true;
+      const d = new Date(tx.date);
+      return !isNaN(d) && d.getFullYear() === _selectedYear && (d.getMonth() + 1) === _selectedMonth;
     });
   }
 
@@ -6729,7 +6795,9 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
     
     if (yearSel.innerHTML !== html) {
       yearSel.innerHTML = html;
-      yearSel.value = _selectedYear;
+    }
+    if (yearSel.value !== String(_selectedYear)) {
+      yearSel.value = String(_selectedYear);
     }
     
     const monthSel = document.getElementById('cfMonthPick');
@@ -6739,7 +6807,9 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
         monthSel.style.display = 'none';
       } else {
         monthSel.style.display = '';
-        monthSel.value = _selectedMonth;
+        if (monthSel.value !== String(_selectedMonth)) {
+          monthSel.value = String(_selectedMonth);
+        }
       }
     }
   }
@@ -6936,7 +7006,6 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
   function init() {
     const yearSel = document.getElementById('cfYearPick');
     const monthSel = document.getElementById('cfMonthPick');
-    const pickerRow = document.getElementById('cfPickerRow');
     
     // 1. Populate năm từ dữ liệu
     const allTxs = getTransactions();
@@ -6948,44 +7017,26 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
     const sortedYears = Array.from(years).sort((a,b) => b - a);
 
     if (yearSel) {
-      yearSel.innerHTML = sortedYears.map(y => `<option value="${y}">Năm ${y}</option>`).join('');
-      yearSel.value = _selectedYear;
+      let html = `<option value="0">Tất cả các năm</option>`;
+      html += sortedYears.map(y => `<option value="${y}">Năm ${y}</option>`).join('');
+      yearSel.innerHTML = html;
+      yearSel.value = String(_selectedYear);
       yearSel.addEventListener('change', () => {
         _selectedYear = parseInt(yearSel.value, 10);
+        if (monthSel) {
+          monthSel.style.display = _selectedYear === 0 ? 'none' : '';
+        }
         render();
       });
     }
     
     if (monthSel) {
-      monthSel.value = _selectedMonth;
+      monthSel.value = String(_selectedMonth);
       monthSel.addEventListener('change', () => {
         _selectedMonth = parseInt(monthSel.value, 10);
         render();
       });
     }
-
-    // Cập nhật hiển thị picker ban đầu
-    const updatePickerUI = () => {
-      if (!pickerRow || !monthSel) return;
-      if (_activeMode === 'all') {
-        pickerRow.classList.add('hidden');
-      } else {
-        pickerRow.classList.remove('hidden');
-        monthSel.style.display = _activeMode === 'year' ? 'none' : '';
-      }
-    };
-    updatePickerUI();
-
-    // 2. Gắn sự kiện tab lọc kỳ
-    document.querySelectorAll('.cf-tab').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('.cf-tab').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        _activeMode = btn.dataset.mode;
-        updatePickerUI();
-        render();
-      });
-    });
 
     // Nút tăng/giảm tỷ lệ
     const rateInput = document.getElementById('cfRateInput');
@@ -7063,3 +7114,551 @@ window.debugReturn = function(keyword) {
   });
   console.groupEnd();
 };
+
+// ===== TRACKING MODULE (SPX Express) =====
+// Module theo dõi vận đơn SPX — IIFE tách biệt, không ảnh hưởng logic kho/giao dịch
+window.TrackingModule = (function() {
+  'use strict';
+
+  // --- Cache & State ---
+  const CACHE_PREFIX = 'spx_cache_';
+  const CACHE_TTL = 15 * 60 * 1000; // 15 phút
+  let _currentFilter = 'active'; // 'active' | 'completed' (đã bỏ 'all')
+  let _searchQuery = '';
+  let _isRefreshing = false;
+  let _hasAutoCheckedStartup = false; // Đánh dấu tự động kiểm tra lúc mở app (chỉ chạy 1 lần)
+
+  // --- Cache helpers ---
+  function getCachedStatus(tn) {
+    if (!tn) return null;
+    try {
+      const raw = sessionStorage.getItem(CACHE_PREFIX + tn);
+      if (!raw) return null;
+      const cached = JSON.parse(raw);
+      if (Date.now() - (cached._cachedAt || 0) > CACHE_TTL) return null;
+      return cached;
+    } catch(e) { return null; }
+  }
+
+  function setCachedStatus(tn, data) {
+    if (!tn || !data) return;
+    try {
+      const obj = Object.assign({}, data, { _cachedAt: Date.now() });
+      sessionStorage.setItem(CACHE_PREFIX + tn, JSON.stringify(obj));
+    } catch(e) { /* ignore */ }
+  }
+
+  // --- Lấy danh sách giao dịch bán có tracking number ---
+  function getTrackingTransactions() {
+    const currentState = (typeof state !== 'undefined') ? state : window.state;
+    if (!currentState || !currentState.transactions) return [];
+    
+    // Ưu tiên lấy từ portfolio đang hoạt động
+    let txs = (currentState.transactions[currentState.activePortfolioId] || []);
+    
+    // Nếu portfolio hiện tại không có, quét thêm các portfolio khác để tránh mất hiển thị
+    if (txs.length === 0 && currentState.transactions) {
+      Object.keys(currentState.transactions).forEach(pid => {
+        if (Array.isArray(currentState.transactions[pid])) {
+          txs = txs.concat(currentState.transactions[pid]);
+        }
+      });
+    }
+
+    // Lọc các giao dịch bán có mã vận đơn
+    return txs.filter(tx => tx && tx.type === 'sell' && tx.trackingNumber && String(tx.trackingNumber).trim() !== '');
+  }
+
+  // --- Kiểm tra đơn đã giao thành công ---
+  function isDelivered(item) {
+    if (!item) return false;
+    const code = Number(item.milestoneCode);
+    if (code === 8) return true; // 8: SPX Delivered
+    const status = String(item.status || '').toLowerCase().trim();
+    if (status === 'delivered') return true;
+    const trackCode = String(item.trackingCode || '').toUpperCase().trim();
+    if (trackCode === 'F980' || trackCode === 'F990') return true;
+    const desc = String(item.description || '').toLowerCase();
+    if (desc.includes('giao hàng thành công') || desc.includes('đã giao thành công')) return true;
+    return false;
+  }
+
+  // --- Kiểm tra đơn giao không thành công / bị trả về / hủy ---
+  function isFailedOrReturned(item) {
+    if (!item) return false;
+    const code = Number(item.milestoneCode);
+    if (code === 9) return true; // 9: SPX Returned/Cancelled
+    const status = String(item.status || '').toLowerCase().trim();
+    if (status === 'returned' || status === 'return_completed' || status === 'cancelled' || status === 'lost' || status === 'damaged') return true;
+    const trackCode = String(item.trackingCode || '').toUpperCase().trim();
+    if (trackCode === 'F950' || trackCode === 'F960' || trackCode === 'F970') return true;
+    const desc = String(item.description || '').toLowerCase();
+    if (desc.includes('trả về') || desc.includes('chuyển hoàn') || desc.includes('hủy') || desc.includes('giao không thành công') || desc.includes('hoàn hàng')) return true;
+    return false;
+  }
+
+  // --- Kiểm tra đơn đã kết thúc (giao thành công hoặc hủy/hoàn) ---
+  function isCompletedMilestone(item) {
+    return isDelivered(item) || isFailedOrReturned(item);
+  }
+
+  // --- Kiểm tra đơn giao thành công CÓ PHẢI TRONG NGÀY HÔM NAY không ---
+  function isDeliveredToday(item) {
+    if (!item || !item.time || !isDelivered(item)) return false;
+    try {
+      const ms = Number(item.time) > 9999999999 ? Number(item.time) : Number(item.time) * 1000;
+      const d = new Date(ms);
+      if (isNaN(d.getTime())) return false;
+      const deliveryDateStr = d.toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+      const todayStr = new Date().toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+      return deliveryDateStr === todayStr;
+    } catch(e) {
+      return false;
+    }
+  }
+
+  // --- Trích xuất địa điểm từ Object location của SPX ---
+  function extractLocationText(loc) {
+    if (!loc) return '';
+    if (typeof loc === 'string') return loc.trim();
+    if (typeof loc === 'object') {
+      if (loc.location_name && loc.location_name.trim()) return loc.location_name.trim();
+      if (loc.full_address && loc.full_address.trim()) return loc.full_address.trim();
+    }
+    return '';
+  }
+
+  // --- Format Unix timestamp (giây) sang thời gian VN ---
+  function formatSPXTime(unixTimestamp) {
+    if (!unixTimestamp) return '—';
+    const ms = Number(unixTimestamp) > 9999999999 ? Number(unixTimestamp) : Number(unixTimestamp) * 1000;
+    const d = new Date(ms);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  // --- Gọi API SPX qua Apps Script ---
+  async function fetchSPXStatus(trackingNumbers) {
+    if (!isCloudConfigured() || !trackingNumbers || trackingNumbers.length === 0) return {};
+    try {
+      const res = await rawApiPost('trackSPX', { trackingNumbers: trackingNumbers });
+      return (res && res.results) ? res.results : {};
+    } catch(e) {
+      console.error('[Tracking] API error:', e);
+      const errResults = {};
+      trackingNumbers.forEach(tn => { errResults[tn] = { error: e.message || 'Lỗi kết nối' }; });
+      return errResults;
+    }
+  }
+
+  // --- Render danh sách ---
+  function render() {
+    const container = document.getElementById('trackingListContainer');
+    const emptyState = document.getElementById('trackingEmptyState');
+    const loadingState = document.getElementById('trackingLoadingState');
+    if (!container) return;
+
+    const allTrackingTxs = getTrackingTransactions();
+
+    // Cập nhật badge trên nav
+    updateNavBadge();
+
+    if (allTrackingTxs.length === 0) {
+      container.innerHTML = '';
+      if (emptyState) emptyState.classList.remove('hidden');
+      if (loadingState) loadingState.classList.add('hidden');
+      return;
+    }
+    if (emptyState) emptyState.classList.add('hidden');
+
+    // Lọc theo search
+    let filteredTxs = allTrackingTxs;
+    if (_searchQuery) {
+      const q = _searchQuery.toLowerCase();
+      filteredTxs = filteredTxs.filter(tx =>
+        (tx.modelName || '').toLowerCase().includes(q) ||
+        (tx.brand || '').toLowerCase().includes(q) ||
+        (tx.trackingNumber || '').toLowerCase().includes(q) ||
+        (tx.notes || '').toLowerCase().includes(q)
+      );
+    }
+
+    // Lọc theo trạng thái: chỉ còn 2 lựa chọn 'active' (Đang xử lý) hoặc 'completed' (Đã kết thúc)
+    filteredTxs = filteredTxs.filter(tx => {
+      const cached = getCachedStatus(tx.trackingNumber);
+      // Chưa có dữ liệu kiểm tra -> mặc định coi là "đang xử lý"
+      if (!cached || cached.error) return _currentFilter === 'active';
+      
+      const isDone = isCompletedMilestone(cached);
+      if (_currentFilter === 'active') {
+        return !isDone;
+      } else {
+        // Giao thành công: CHỈ LƯU VÀ HIỂN THỊ TRONG 1 NGÀY (HÔM NAY), qua hôm sau tự động ẩn
+        if (isDelivered(cached)) {
+          return isDeliveredToday(cached);
+        }
+        // Đơn bị hoàn về / hủy: vẫn giữ lại trong tab Đã kết thúc để đối soát
+        return isFailedOrReturned(cached);
+      }
+    });
+
+    if (filteredTxs.length === 0) {
+      container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:var(--text-muted);">Không có vận đơn nào phù hợp bộ lọc hiện tại.</div>';
+      return;
+    }
+
+    // Render cards
+    let html = '<div class="tracking-list">';
+    filteredTxs.forEach(tx => {
+      const cached = getCachedStatus(tx.trackingNumber);
+      html += renderTrackingCard(tx, cached);
+    });
+    html += '</div>';
+    container.innerHTML = html;
+
+    // Gắn sự kiện nút Refresh từng đơn
+    container.querySelectorAll('.tracking-refresh-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const tn = btn.dataset.tn;
+        if (!tn || btn.classList.contains('spinning')) return;
+        btn.classList.add('spinning');
+        try {
+          const results = await fetchSPXStatus([tn]);
+          if (results[tn]) {
+            setCachedStatus(tn, results[tn]);
+          } else {
+            setCachedStatus(tn, { error: 'Không nhận được phản hồi từ SPX' });
+          }
+        } catch(err) {
+          setCachedStatus(tn, { error: err.message || 'Lỗi kiểm tra' });
+        } finally {
+          btn.classList.remove('spinning');
+          render();
+        }
+      });
+    });
+
+    // Gắn sự kiện Mở link SPX
+    container.querySelectorAll('.tracking-spx-link').forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const tn = link.dataset.tn;
+        if (tn) {
+          window.open('https://spx.vn/tracking?tracking_number=' + encodeURIComponent(tn), '_blank');
+        }
+      });
+    });
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+
+  // --- Render 1 card vận đơn ---
+  function renderTrackingCard(tx, cached) {
+    const tn = String(tx.trackingNumber || '').trim();
+    let statusHtml = '';
+    let timeHtml = '';
+    let locationHtml = '';
+    let cachedNote = '';
+
+    if (cached && !cached.error) {
+      let statusClass = 'tracking-status-active';
+      let defaultText = 'Đang xử lý';
+
+      if (isDelivered(cached)) {
+        statusClass = 'tracking-status-completed'; // Xanh lá
+        defaultText = 'Giao hàng thành công';
+      } else if (isFailedOrReturned(cached)) {
+        statusClass = 'tracking-status-error'; // Đỏ
+        defaultText = 'Giao không thành công / Bị trả về';
+      }
+
+      const statusText = cached.description || cached.status || defaultText;
+      statusHtml = '<span class="tracking-status-badge ' + statusClass + '">' + statusText + '</span>';
+      timeHtml = '<span class="tracking-time">' + formatSPXTime(cached.time) + '</span>';
+      
+      // Lấy thông tin vị trí (kiểm tra cả location và nextLocation)
+      const locText = extractLocationText(cached.location) || extractLocationText(cached.nextLocation);
+      if (locText) {
+        locationHtml = '<span class="tracking-location"><i data-lucide="map-pin" style="width:11px;height:11px;"></i> ' + locText + '</span>';
+      }
+
+      if (cached._cachedAt) {
+        const ago = Math.round((Date.now() - cached._cachedAt) / 60000);
+        cachedNote = '<span class="tracking-cached-note">Kiểm tra ' + (ago < 1 ? 'vừa xong' : ago + ' phút trước') + (cached.slsTn ? ' · Mã nội bộ: ' + cached.slsTn : '') + '</span>';
+      }
+    } else if (cached && cached.error) {
+      statusHtml = '<span class="tracking-status-badge tracking-status-error">⚠ ' + cached.error + '</span>';
+      cachedNote = '<span class="tracking-cached-note tracking-error-note">Chưa kết nối được SPX · Bấm cập nhật lại</span>';
+    } else {
+      statusHtml = '<span class="tracking-status-badge tracking-status-unknown">Chưa kiểm tra</span>';
+      cachedNote = '<span class="tracking-cached-note">Bấm nút cập nhật để tải trạng thái từ SPX</span>';
+    }
+
+    const txDateStr = (typeof formatDate === 'function' && tx.date) ? formatDate(tx.date) : (tx.date || '');
+
+    return '<div class="tracking-card" data-tn="' + tn + '">' +
+      '<div class="tracking-card-header">' +
+        '<div class="tracking-product-info">' +
+          '<span class="tracking-product-name">' + (tx.modelName || 'Mô hình xe') + '</span>' +
+          '<span class="tracking-product-brand">' + (tx.brand || '') + (tx.color ? ' · ' + tx.color : '') + '</span>' +
+          '<span class="tracking-tx-date">' + txDateStr + (tx.channel ? ' · ' + tx.channel : '') + '</span>' +
+        '</div>' +
+        '<div class="tracking-actions">' +
+          '<button class="tracking-refresh-btn" data-tn="' + tn + '" title="Cập nhật trạng thái">' +
+            '<i data-lucide="refresh-cw"></i>' +
+          '</button>' +
+          '<a href="#" class="tracking-spx-link" data-tn="' + tn + '" title="Xem chi tiết trên SPX">' +
+            '<i data-lucide="external-link"></i>' +
+          '</a>' +
+        '</div>' +
+      '</div>' +
+      '<div class="tracking-card-body">' +
+        '<div class="tracking-tn-row">' +
+          '<span class="tracking-tn-label">Mã VĐ:</span>' +
+          '<span class="tracking-tn-value">' + tn + '</span>' +
+        '</div>' +
+        '<div class="tracking-status-row">' +
+          statusHtml + timeHtml +
+        '</div>' +
+        (locationHtml ? '<div class="tracking-location-row">' + locationHtml + '</div>' : '') +
+        '<div class="tracking-meta-row">' +
+          cachedNote +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // --- Cập nhật tất cả đơn đang xử lý ---
+  async function refreshAll(options) {
+    options = options || {};
+    const isSilent = Boolean(options.silent);
+
+    if (_isRefreshing) return;
+    _isRefreshing = true;
+
+    const btn = document.getElementById('trackingRefreshAllBtn');
+    const loadingState = document.getElementById('trackingLoadingState');
+    const resultDiv = document.getElementById('trackingRefreshResult');
+    
+    // Nếu không phải chạy ngầm thì mới hiện spinner và disable nút
+    if (!isSilent) {
+      if (btn) btn.disabled = true;
+      if (loadingState) loadingState.classList.remove('hidden');
+      if (resultDiv) resultDiv.classList.add('hidden');
+    }
+
+    try {
+      const allTxs = getTrackingTransactions();
+      
+      // Lấy danh sách mã chưa kết thúc (hoặc chưa có cache)
+      const toRefreshTxs = allTxs.filter(tx => {
+        const cached = getCachedStatus(tx.trackingNumber);
+        return !cached || cached.error || !isCompletedMilestone(cached);
+      });
+
+      // Lọc trùng mã vận đơn
+      const uniqueTns = [...new Set(toRefreshTxs.map(tx => String(tx.trackingNumber).trim()))].filter(Boolean);
+
+      let successCount = 0;
+      let errorCount = 0;
+
+      if (uniqueTns.length > 0) {
+        // Gửi theo đợt tối đa 20 mã
+        const BATCH_SIZE = 20;
+        for (let i = 0; i < uniqueTns.length; i += BATCH_SIZE) {
+          const batch = uniqueTns.slice(i, i + BATCH_SIZE);
+          const results = await fetchSPXStatus(batch);
+          for (const tn of batch) {
+            if (results[tn]) {
+              setCachedStatus(tn, results[tn]);
+              if (!results[tn].error) {
+                successCount++;
+              } else {
+                errorCount++;
+              }
+            } else {
+              setCachedStatus(tn, { error: 'Không nhận được phản hồi' });
+              errorCount++;
+            }
+          }
+        }
+      }
+
+      // Thông báo kết quả (chỉ hiển thị khi người dùng chủ động bấm nút, không hiện khi chạy ngầm lúc mở app)
+      if (!isSilent && resultDiv) {
+        if (uniqueTns.length > 0) {
+          const isAllOk = errorCount === 0;
+          resultDiv.style.background = isAllOk ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)';
+          resultDiv.style.color = isAllOk ? 'var(--success, #22c55e)' : 'var(--danger, #ef4444)';
+          resultDiv.innerHTML = '✓ Đã cập nhật xong ' + successCount + '/' + uniqueTns.length + ' vận đơn' + (errorCount > 0 ? ' (' + errorCount + ' đơn lỗi)' : '');
+        } else {
+          resultDiv.style.background = 'rgba(59,130,246,0.1)';
+          resultDiv.style.color = '#60a5fa';
+          resultDiv.innerHTML = 'Tất cả các đơn hiện tại đều đã được giao thành công!';
+        }
+        resultDiv.classList.remove('hidden');
+        setTimeout(() => { if (resultDiv) resultDiv.classList.add('hidden'); }, 6000);
+      }
+    } catch(e) {
+      console.error('[Tracking] refreshAll error:', e);
+    } finally {
+      if (!isSilent) {
+        if (loadingState) loadingState.classList.add('hidden');
+        if (btn) btn.disabled = false;
+      }
+      _isRefreshing = false;
+      
+      // Cập nhật ngay 3 chấm tròn trên Navbar
+      updateNavBadge();
+
+      // Nếu đang mở tab tracking thì vẽ lại danh sách card
+      const trackingPanel = document.getElementById('panel-tracking');
+      if (trackingPanel && trackingPanel.classList.contains('active')) {
+        render();
+      }
+    }
+  }
+
+  // --- Tự động kiểm tra SPX 1 lần khi vừa mở ứng dụng (Startup Auto-check) ---
+  function autoCheckOnStartup() {
+    if (_hasAutoCheckedStartup) return;
+    _hasAutoCheckedStartup = true;
+
+    // Cập nhật số liệu từ cache ngay lập tức để người dùng thấy số
+    updateNavBadge();
+
+    // Chạy dò trạng thái SPX mới nhất ở chế độ nền
+    setTimeout(() => {
+      const allTxs = getTrackingTransactions();
+      if (allTxs.length > 0) {
+        console.log('[Tracking] Tự động dò trạng thái SPX lúc khởi động cho', allTxs.length, 'vận đơn...');
+        refreshAll({ silent: true });
+      }
+    }, 1200); // Đợi 1.2s sau khi app nạp dữ liệu xong để không chặn giao diện chính
+  }
+
+  // --- Cập nhật badge trên menu và 3 chấm tròn trạng thái trên navbar ---
+  function updateNavBadge() {
+    const allTxs = getTrackingTransactions();
+    let activeCount = 0;   // 🟡 Vàng: Đang giao / Đang xử lý
+    let successToday = 0;  // 🟢 Xanh lá: Giao thành công hôm nay
+    let failedCount = 0;   // 🔴 Đỏ: Giao không thành công / Hoàn / Hủy
+
+    allTxs.forEach(tx => {
+      const cached = getCachedStatus(tx.trackingNumber);
+      if (!cached || cached.error) {
+        activeCount++;
+      } else if (isDelivered(cached)) {
+        if (isDeliveredToday(cached)) {
+          successToday++;
+        }
+      } else if (isFailedOrReturned(cached)) {
+        failedCount++;
+      } else {
+        activeCount++;
+      }
+    });
+
+    // 1. Cập nhật 3 chấm tròn trên Navbar (🟡 Vàng · 🟢 Xanh · 🔴 Đỏ)
+    const elYellow = document.getElementById('dotCountActive');
+    const elGreen  = document.getElementById('dotCountSuccess');
+    const elRed    = document.getElementById('dotCountFailed');
+    if (elYellow) elYellow.textContent = activeCount;
+    if (elGreen)  elGreen.textContent  = successToday;
+    if (elRed)    elRed.textContent    = failedCount;
+
+    // 2. Cập nhật badge số lượng trên sidebar menu
+    const badge = document.getElementById('trackingNavBadge');
+    if (badge) {
+      if (activeCount > 0) {
+        badge.textContent = activeCount;
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
+    }
+  }
+
+  // --- Khởi tạo các sự kiện giao diện ---
+  function init() {
+    // Click vào 3 chấm tròn trên Navbar -> Chuyển nhanh sang tab Theo dõi vận đơn
+    const navDots = document.getElementById('navTrackingDots');
+    if (navDots) {
+      navDots.addEventListener('click', function(e) {
+        e.preventDefault();
+        const trackingNavBtn = document.querySelector('.nav-link[data-tab="tracking"]');
+        if (trackingNavBtn) {
+          trackingNavBtn.click();
+        }
+      });
+    }
+
+    const filterEl = document.getElementById('trackingFilterStatus');
+    if (filterEl) {
+      filterEl.value = _currentFilter;
+      filterEl.addEventListener('change', function() {
+        _currentFilter = filterEl.value;
+        render();
+      });
+    }
+
+    const searchEl = document.getElementById('trackingSearchInput');
+    if (searchEl) {
+      searchEl.addEventListener('input', function() {
+        _searchQuery = searchEl.value.trim();
+        render();
+      });
+    }
+
+    const refreshBtn = document.getElementById('trackingRefreshAllBtn');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        refreshAll();
+      });
+    }
+
+    // Lắng nghe khi dữ liệu giao dịch cập nhật từ cloud hoặc local
+    document.addEventListener('transactionUpdated', function() {
+      const trackingPanel = document.getElementById('panel-tracking');
+      if (trackingPanel && trackingPanel.classList.contains('active')) {
+        render();
+      }
+      updateNavBadge();
+    });
+
+    updateNavBadge();
+  }
+
+  // Hàm mở tab và render
+  function openTab() {
+    render();
+  }
+
+  return {
+    init: init,
+    render: openTab,
+    refreshAll: refreshAll,
+    updateNavBadge: updateNavBadge,
+    autoCheckOnStartup: autoCheckOnStartup
+  };
+})();
+
+// Khởi tạo TrackingModule và tự động dò trạng thái lúc mở app
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', function() {
+    if (window.TrackingModule) {
+      window.TrackingModule.init();
+      window.TrackingModule.autoCheckOnStartup();
+    }
+  });
+} else {
+  setTimeout(function() {
+    if (window.TrackingModule) {
+      window.TrackingModule.init();
+      window.TrackingModule.autoCheckOnStartup();
+    }
+  }, 0);
+}
+

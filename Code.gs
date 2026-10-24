@@ -55,6 +55,7 @@ function doPost(e) {
       case "syncCarImagesMappings":result = syncCarImagesMappings(body.data);break;
       case "writeTaxDeclaration":result = writeTaxDeclaration(body.data);break;
       case "scanSheet":          result = scanSheet(body.data);          break;
+      case "trackSPX":        return respond(trackSPX(body.data));
       default: result = { error: "Unknown action: " + action };
     }
   } catch (err) {
@@ -82,7 +83,7 @@ function getSheet(name) {
 function ensureTransactionsColumns(sheet) {
   const lastCol = sheet.getLastColumn();
   const headers = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
-  const required = ["relatedTxId", "returnLoss", "taxUnitPrice", "restockToInventory", "updatedAt"]; // Trả hàng: liên kết + khoản lỗ + có hoàn kho không | Shopee: giá đăng bán/khai thuế | Sync: mốc thời gian sửa gần nhất
+  const required = ["relatedTxId", "returnLoss", "taxUnitPrice", "restockToInventory", "updatedAt", "trackingNumber"]; // Trả hàng: liên kết + khoản lỗ + có hoàn kho không | Shopee: giá đăng bán/khai thuế | Sync: mốc thời gian sửa gần nhất
   let changed = false;
   required.forEach(col => {
     if (headers.indexOf(col) === -1) {
@@ -103,7 +104,7 @@ function createSheet(ss, name) {
     Portfolios:   ["portfolioId", "portfolioName"],
     Transactions: ["id", "portfolioId", "type", "modelName", "brand", "qty",
                    "unitCost", "unitPrice", "channel", "notes", "date", "color", "packaging", "sku",
-                   "relatedTxId", "returnLoss", "taxUnitPrice", "restockToInventory", "updatedAt"], // Trả hàng: liên kết + lỗ + hoàn kho | Shopee: giá đăng bán/khai thuế | Sync: mốc thời gian sửa
+                   "relatedTxId", "returnLoss", "taxUnitPrice", "restockToInventory", "updatedAt", "trackingNumber"], // Trả hàng: liên kết + lỗ + hoàn kho | Shopee: giá đăng bán/khai thuế | Sync: mốc thời gian sửa
     Settings:     ["key", "value"]
   };
   if (headers[name]) {
@@ -168,6 +169,8 @@ function getAllData() {
     }
     // Sync: mốc thời gian sửa gần nhất, dùng để đối chiếu local vs cloud khi merge (client-side)
     if (r.updatedAt !== undefined && r.updatedAt !== "" && r.updatedAt !== null) tx.updatedAt = Number(r.updatedAt);
+    // Theo dõi vận đơn SPX: chỉ gắn khi có dữ liệu
+    if (r.trackingNumber !== undefined && r.trackingNumber !== "" && r.trackingNumber !== null) tx.trackingNumber = String(r.trackingNumber);
     transactions[pid].push(tx);
   });
 
@@ -219,7 +222,8 @@ function saveTransaction(tx) {
     (tx.type === "return_buy" || tx.type === "return_sell") ? Number(tx.returnLoss || 0) : "",
     (tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null) ? Number(tx.taxUnitPrice) : "", // Shopee: giá đăng bán/khai thuế
     (tx.type === "return_buy" || tx.type === "return_sell") ? (tx.restockToInventory !== false) : "", // Trả hàng: có hoàn kho không
-    (tx.updatedAt !== undefined && tx.updatedAt !== null) ? Number(tx.updatedAt) : "" // Sync: mốc thời gian sửa gần nhất
+    (tx.updatedAt !== undefined && tx.updatedAt !== null) ? Number(tx.updatedAt) : "", // Sync: mốc thời gian sửa gần nhất
+    tx.trackingNumber || "" // Mã vận đơn SPX
   ]);
   return { ok: true };
 }
@@ -229,7 +233,7 @@ function updateTransaction(tx) {
   const data  = sheet.getDataRange().getValues();
   for (let i = 1; i < data.length; i++) {
     if (String(data[i][0]) === String(tx.id)) {
-      sheet.getRange(i + 1, 1, 1, 19).setValues([[
+      sheet.getRange(i + 1, 1, 1, 20).setValues([[
         tx.id, tx.portfolioId, tx.type, tx.modelName, tx.brand,
         tx.qty,
         (tx.type === "buy" || tx.type === "return_buy") ? tx.unitCost : "",
@@ -240,7 +244,8 @@ function updateTransaction(tx) {
         (tx.type === "return_buy" || tx.type === "return_sell") ? Number(tx.returnLoss || 0) : "",
         (tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null) ? Number(tx.taxUnitPrice) : "",
         (tx.type === "return_buy" || tx.type === "return_sell") ? (tx.restockToInventory !== false) : "",
-        (tx.updatedAt !== undefined && tx.updatedAt !== null) ? Number(tx.updatedAt) : ""
+        (tx.updatedAt !== undefined && tx.updatedAt !== null) ? Number(tx.updatedAt) : "",
+        tx.trackingNumber || "" // Mã vận đơn SPX
       ]]);
       return { ok: true };
     }
@@ -342,13 +347,88 @@ function replaceTransactions(data) {
       (tx.type === "return_buy" || tx.type === "return_sell") ? Number(tx.returnLoss || 0) : "",
       (tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null) ? Number(tx.taxUnitPrice) : "",
       (tx.type === "return_buy" || tx.type === "return_sell") ? (tx.restockToInventory !== false) : "",
-      (tx.updatedAt !== undefined && tx.updatedAt !== null) ? Number(tx.updatedAt) : ""
+      (tx.updatedAt !== undefined && tx.updatedAt !== null) ? Number(tx.updatedAt) : "",
+      tx.trackingNumber || "" // Mã vận đơn SPX
     ]);
   });
   sheet.clear();
   sheet.getRange(1, 1, newRows.length, headers.length).setValues(newRows);
   sheet.getRange(1, 1, 1, headers.length).setBackground("#1e293b").setFontColor("#ffffff").setFontWeight("bold");
   return { ok: true };
+}
+
+// --- TRACK SPX ---
+
+/**
+ * Lấy trạng thái vận đơn SPX Express.
+ * @param {Object} data - { trackingNumbers: string[] }
+ * @returns {Object} - { results: { [tn]: { status, description, time, milestoneCode, location, slsTn, error } } }
+ */
+function trackSPX(data) {
+  if (!data || !Array.isArray(data.trackingNumbers) || data.trackingNumbers.length === 0) {
+    return { error: "Missing trackingNumbers array" };
+  }
+
+  // Giới hạn tối đa 20 mã mỗi lần gọi
+  const MAX_BATCH = 20;
+  const trackingNumbers = data.trackingNumbers.slice(0, MAX_BATCH);
+  const results = {};
+
+  trackingNumbers.forEach(tn => {
+    try {
+      const url = "https://spx.vn/shipment/order/open/order/get_order_info?spx_tn=" + encodeURIComponent(tn) + "&language_code=vi";
+      const response = UrlFetchApp.fetch(url, {
+        method: "get",
+        muteHttpExceptions: true,
+        headers: {
+          "Accept": "application/json",
+          "User-Agent": "Mozilla/5.0"
+        }
+      });
+
+      const httpCode = response.getResponseCode();
+      if (httpCode !== 200) {
+        results[tn] = { error: "HTTP " + httpCode };
+        return;
+      }
+
+      const json = JSON.parse(response.getContentText());
+      if (json.retcode !== 0) {
+        results[tn] = { error: "SPX retcode: " + json.retcode + (json.message ? " - " + json.message : "") };
+        return;
+      }
+
+      const trackingInfo = json.data && json.data.sls_tracking_info;
+      if (!trackingInfo || !trackingInfo.records || trackingInfo.records.length === 0) {
+        results[tn] = { error: "Không có dữ liệu theo dõi" };
+        return;
+      }
+
+      // Tìm sự kiện mới nhất theo actual_time (không mặc định phần tử đầu)
+      const records = trackingInfo.records;
+      let latest = records[0];
+      for (let i = 1; i < records.length; i++) {
+        if (Number(records[i].actual_time) > Number(latest.actual_time)) {
+          latest = records[i];
+        }
+      }
+
+      results[tn] = {
+        status: latest.milestone_name || "",
+        description: latest.buyer_description || latest.milestone_name || "",
+        time: Number(latest.actual_time) || 0,
+        milestoneCode: latest.milestone_code || "",
+        trackingCode: latest.tracking_code || "",
+        location: latest.current_location || "",
+        nextLocation: latest.next_location || "",
+        slsTn: trackingInfo.sls_tn || ""
+      };
+    } catch (e) {
+      results[tn] = { error: "Exception: " + e.message };
+    }
+  });
+
+  return { results: results };
 }
 
 // --- IMAGE UPLOAD ---
