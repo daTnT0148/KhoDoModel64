@@ -9,8 +9,15 @@
  */
 
 // Đọc từ env.js (không hardcode URL ở đây để tránh lộ lên GitHub)
-const APPS_SCRIPT_URL = (window.ENV && window.ENV.APPS_SCRIPT_URL) || "";
-const API_SECRET_KEY  = (window.ENV && window.ENV.SECRET_KEY)       || "";
+// Dùng let để auth.js có thể gán lại sau khi đăng nhập Firebase
+let APPS_SCRIPT_URL = (window.ENV && window.ENV.APPS_SCRIPT_URL) || "";
+let API_SECRET_KEY  = (window.ENV && window.ENV.SECRET_KEY)       || "";
+
+// Cho phép auth.js cập nhật config sau khi đăng nhập (thay thế env.js)
+function setCloudConfig(url, key) {
+  APPS_SCRIPT_URL = url || "";
+  API_SECRET_KEY  = key || "";
+}
 
 // ─── Kiểm tra đã cấu hình chưa ───────────────────────────────────────────────
 
