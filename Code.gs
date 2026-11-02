@@ -6,7 +6,7 @@
 const SHEET_ID         = "1VB01bVUDH-fBKwiS4JfOhiNSqsH37snzYZnHefq86Xs";
 const DRIVE_FOLDER_ID  = "1eaGPgd7czUjSTBBXPsFJ1LT4ac4TlFHg";
 const FIREBASE_API_KEY  = "AIzaSyCgtdUzcEqdG2qE59WP1EO--xAgisucAsE"; // Lấy từ Firebase Web API Key
-const ALLOWED_EMAILS    = ["datcoi482001@gmail.com"]; // Danh sách email được phép truy cập kho (để rỗng [] nếu cho phép mọi user Firebase)
+const ALLOWED_EMAILS    = []; // Để rỗng []: Cho phép mọi tài khoản đã đăng nhập Firebase của bạn truy cập kho
 const SECRET_KEY_LEGACY = "Kntvntd482001"; // Fallback tạm thời trong lúc chuyển giao
 
 function getSpreadsheet() {
