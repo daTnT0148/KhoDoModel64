@@ -343,6 +343,7 @@
 
         <!-- ================= PANEL 1: DASHBOARD ================= -->
         <section class="panel active" id="panel-dashboard">
+          <h2 class="sr-only">Tổng quan kho hàng</h2>
           
           <!-- Quick Financial KPI Cards -->
           <div class="kpi-grid">
@@ -351,7 +352,7 @@
                 <span class="kpi-title">Giá trị kho hiện tại</span>
                 <i data-lucide="box" class="icon-inventory"></i>
               </div>
-              <h3 class="kpi-value" id="val-total-inventory">0 vnd</h3>
+              <div class="kpi-value" id="val-total-inventory">0 vnd</div>
               <p class="kpi-subtext" id="sub-total-inventory">Tổng số lượng: 0 chiếc xe</p>
             </div>
             <div class="kpi-card" id="kpi-total-cost">
@@ -359,7 +360,7 @@
                 <span class="kpi-title">Tổng chi phí nhập kho</span>
                 <i data-lucide="shopping-cart" class="icon-cost"></i>
               </div>
-              <h3 class="kpi-value" id="val-total-cost">0 vnd</h3>
+              <div class="kpi-value" id="val-total-cost">0 vnd</div>
               <p class="kpi-subtext" id="sub-total-cost">Bao gồm cả xe đã bán</p>
             </div>
             <div class="kpi-card" id="kpi-total-revenue">
@@ -367,7 +368,7 @@
                 <span class="kpi-title">Tổng doanh thu bán xe</span>
                 <i data-lucide="banknote" class="icon-revenue"></i>
               </div>
-              <h3 class="kpi-value" id="val-total-revenue">0 vnd</h3>
+              <div class="kpi-value" id="val-total-revenue">0 vnd</div>
               <p class="kpi-subtext" id="sub-total-revenue">Đã bán: 0 chiếc xe</p>
             </div>
             <div class="kpi-card" id="kpi-net-profit">
@@ -375,7 +376,7 @@
                 <span class="kpi-title">Lợi nhuận ròng thực tế</span>
                 <i data-lucide="trending-up" class="icon-profit"></i>
               </div>
-              <h3 class="kpi-value" id="val-net-profit">0 vnd</h3>
+              <div class="kpi-value" id="val-net-profit">0 vnd</div>
               <p class="kpi-subtext" id="sub-net-profit">Tỷ lệ ROI: 0.0%</p>
               <div class="profit-breakdown">
                 <span>Hôm nay:<strong id="val-profit-today">0 vnd</strong></span>
@@ -388,7 +389,7 @@
                 <span class="kpi-title">Chi phí trả hàng (Ship/Bao bì)</span>
                 <i data-lucide="rotate-ccw" class="icon-return"></i>
               </div>
-              <h3 class="kpi-value text-danger" id="val-return-loss">0 vnd</h3>
+              <div class="kpi-value text-danger" id="val-return-loss">0 vnd</div>
               <p class="kpi-subtext" id="sub-return-loss">Đã trừ vào lợi nhuận ròng</p>
             </div>
           </div>
@@ -404,7 +405,7 @@
                 <span class="chart-tag" style="margin:auto;">(Bao gồm giá đăng bán Shopee & lợi nhuận kênh khác)</span>
               </div>
               <div style="flex:1; display:flex; align-items:center; justify-content:center; width:100%; margin-top:20px;">
-                <h1 id="val-yearly-revenue" style="font-size: 2.8rem; color: var(--success); margin: 0; font-weight:800; text-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);">0 vnd</h1>
+                <div id="val-yearly-revenue" style="font-size: 2.8rem; color: var(--success); margin: 0; font-weight:800; text-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);">0 vnd</div>
               </div>
             </div>
 
@@ -608,6 +609,7 @@
 
         <!-- ================= PANEL 2: INVENTORY ================= -->
         <section class="panel" id="panel-inventory">
+          <h2 class="sr-only">Quản lý kho hàng</h2>
 
           <!-- Shopee Profit Calculator -->
           <div class="dashboard-table-card" id="shopeeCalcCard" style="margin-bottom:20px;">
@@ -748,6 +750,7 @@
 
         <!-- ================= PANEL 3: TRANSACTIONS ================= -->
         <section class="panel" id="panel-transactions">
+          <h2 class="sr-only">Giao dịch mua bán</h2>
           
           <!-- Tab switcher: chỉ hiện trên mobile, desktop giữ nguyên 3 form side-by-side -->
           <div class="tx-tab-switcher" id="txTabSwitcher">
@@ -793,7 +796,7 @@
                   <div class="form-group">
                     <label for="buyDate">Ngày mua <span class="required">*</span></label>
                     <div class="datepicker-wrapper" id="buyDateWrapper">
-                      <input type="text" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
+                      <input type="text" id="buyDate" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
                       <i data-lucide="calendar" class="datepicker-icon"></i>
                     </div>
                   </div>
@@ -882,13 +885,14 @@
                   <div class="form-group">
                     <label for="sellChannel">Kênh bán hàng <span class="required">*</span></label>
                     <select id="sellChannel" required>
+                      <option value="" disabled selected hidden>-- Chọn kênh bán --</option>
                       <!-- Các option được tạo động bởi populateChannelSelects() trong app.js -->
                     </select>
                   </div>
                   <div class="form-group">
                     <label for="sellDate">Ngày bán <span class="required">*</span></label>
                     <div class="datepicker-wrapper" id="sellDateWrapper">
-                      <input type="text" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
+                      <input type="text" id="sellDate" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
                       <i data-lucide="calendar" class="datepicker-icon"></i>
                     </div>
                   </div>
@@ -942,6 +946,7 @@
                 <div class="form-group">
                   <label for="returnType">Loại trả hàng <span class="required">*</span></label>
                   <select id="returnType" required>
+                    <option value="" disabled selected hidden>-- Chọn loại trả hàng --</option>
                     <option value="return_buy">Trả hàng nhập (trả lại NCC)</option>
                     <option value="return_sell">Trả hàng bán (khách trả lại)</option>
                   </select>
@@ -975,7 +980,7 @@
                   <div class="form-group">
                     <label for="returnDate">Ngày trả hàng <span class="required">*</span></label>
                     <div class="datepicker-wrapper" id="returnDateWrapper">
-                      <input type="text" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
+                      <input type="text" id="returnDate" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
                       <i data-lucide="calendar" class="datepicker-icon"></i>
                     </div>
                   </div>
@@ -1101,6 +1106,7 @@
 
         <!-- ================= PANEL 4: REPORTS ================= -->
         <section class="panel" id="panel-reports">
+          <h2 class="sr-only">Báo cáo năm</h2>
           
           <!-- Financial YoY Overview -->
           <div class="report-yoy-grid">
@@ -1165,6 +1171,7 @@
 
         <!-- ================= PANEL 5: SETTINGS ================= -->
         <section class="panel" id="panel-settings">
+          <h2 class="sr-only">Cài đặt hệ thống</h2>
           
           <div class="settings-grid">
             
@@ -1262,6 +1269,7 @@
 
         </section>
         <section class="panel" id="panel-tax-info">
+          <h2 class="sr-only">Thông tin thuế HKD</h2>
           <div class="settings-grid">
             <div class="settings-card settings-card-full">
               <h3><i data-lucide="user-circle"></i> Thông tin Hộ kinh doanh / Cá nhân</h3>
@@ -1293,6 +1301,7 @@
 
         <!-- ================= PANEL: TAX DECLARATIONS ================= -->
         <section class="panel" id="panel-tax-declarations">
+          <h2 class="sr-only">Tờ khai và Sổ kế toán HKD</h2>
           <div id="taxDeclarationsListView">
             <div class="card-header-actions" style="margin-bottom: 20px;">
               <h3 style="color:var(--text-white);font-size:18px;font-weight:700;">Danh sách Sổ kế toán HKD</h3>
@@ -1311,21 +1320,21 @@
               <div id="taxDetailBadge"></div>
             </div>
             <div class="settings-card">
-              <h3 id="taxDetailTitle"></h3>
+              <h3 id="taxDetailTitle">Chi tiết sổ kế toán</h3>
               <p class="settings-desc" id="taxDetailSubtitle"></p>
               <div class="styled-form">
                 <div class="form-row">
                   <div class="form-group">
-                    <label>Từ ngày (Kỳ báo cáo)</label>
+                    <label for="taxDetailFrom">Từ ngày (Kỳ báo cáo)</label>
                     <div class="datepicker-wrapper" id="taxDetailFromWrapper">
-                      <input type="text" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
+                      <input type="text" id="taxDetailFrom" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
                       <i data-lucide="calendar" class="datepicker-icon"></i>
                     </div>
                   </div>
                   <div class="form-group">
-                    <label>Đến ngày (Kỳ báo cáo)</label>
+                    <label for="taxDetailTo">Đến ngày (Kỳ báo cáo)</label>
                     <div class="datepicker-wrapper" id="taxDetailToWrapper">
-                      <input type="text" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
+                      <input type="text" id="taxDetailTo" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
                       <i data-lucide="calendar" class="datepicker-icon"></i>
                     </div>
                   </div>
@@ -1363,6 +1372,7 @@
 
         <!-- ================= PANEL: TAX CONFIG ================= -->
         <section class="panel" id="panel-tax-config">
+          <h2 class="sr-only">Cấu hình mẫu thuế HKD</h2>
           <div class="settings-grid">
             <div class="settings-card settings-card-full">
               <h3><i data-lucide="file-spreadsheet"></i> File mẫu kê khai</h3>
@@ -1442,13 +1452,14 @@
           <div class="form-group">
             <label for="editTxDate">Ngày giao dịch <span class="required">*</span></label>
             <div class="datepicker-wrapper" id="editTxDateWrapper">
-              <input type="text" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
+              <input type="text" id="editTxDate" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
               <i data-lucide="calendar" class="datepicker-icon"></i>
             </div>
           </div>
           <div class="form-group" id="editTxChannelGroup">
             <label for="editTxChannel">Kênh bán hàng <span class="required">*</span></label>
             <select id="editTxChannel">
+              <option value="" disabled selected hidden>-- Chọn kênh bán --</option>
               <!-- Các option được tạo động bởi populateChannelSelects() trong app.js -->
             </select>
           </div>
@@ -1650,7 +1661,7 @@
   <div id="imgLightbox" class="img-lightbox hidden" onclick="closeImgLightbox()">
     <div class="img-lightbox-inner" onclick="event.stopPropagation()">
       <button class="img-lightbox-close" onclick="closeImgLightbox()">&times;</button>
-      <img id="imgLightboxImg" src="" alt="Ảnh sản phẩm">
+      <img id="imgLightboxImg" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" alt="Ảnh sản phẩm">
       <div id="imgLightboxCaption" class="img-lightbox-caption"></div>
     </div>
   </div>

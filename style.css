@@ -52,6 +52,19 @@ body {
   line-height: 1.5;
 }
 
+/* Accessibility: Screen Reader Only (ẩn thị giác nhưng giữ cấu trúc ngữ nghĩa chuẩn W3C) */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* Tự chế cuộn chuột đẹp */
 ::-webkit-scrollbar {
   width: 6px;
