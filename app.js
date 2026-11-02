@@ -642,7 +642,9 @@ function calculateInventory(portfolioId) {
       if (lot.qty > 0) events.push({ type: 'buy', qty: lot.qty, unitCost: lot.unitCost, date: lot.date });
     });
     item.sells.forEach(sell => {
-      if (sell.qty > 0) events.push({ type: 'sell', qty: sell.qty, unitPrice: sell.unitPrice, date: sell.date, originalTx: sell.originalTx });
+      // Push ALL sells including qty=0 (fully-restocked returns) so fifoAvgCost is always set.
+      // Without this, Cash Flow widget can't look up the avg cost to correctly reverse profit.
+      events.push({ type: 'sell', qty: sell.qty, unitPrice: sell.unitPrice, date: sell.date, originalTx: sell.originalTx });
     });
     events.sort((a, b) => {
       const diff = new Date(a.date) - new Date(b.date);
@@ -663,13 +665,16 @@ function calculateInventory(portfolioId) {
         runAvgCost  = runQty > 0 ? newTotalValue / runQty : 0;
       } else {
         // Bán hàng → COGS = SL × bình quân hiện tại, bình quân KHÔNG ĐỔI
-        totalCOGS += evt.qty * runAvgCost;
-        runQty     = Math.max(0, runQty - evt.qty);
+        if (evt.qty > 0) {
+          totalCOGS += evt.qty * runAvgCost;
+          runQty     = Math.max(0, runQty - evt.qty);
+        }
         // runAvgCost giữ nguyên — đặc trưng của Bình Quân Gia Quyền
 
-        // Gán giá vốn bình quân vào giao dịch bán gốc (Cash Flow widget + lịch sử dùng)
-        if (evt.qty > 0 && evt.originalTx) {
-          evt.originalTx.fifoAvgCost = runAvgCost; // Giữ tên property cũ để tương thích
+        // LUÔN gán giá vốn bình quân vào giao dịch bán gốc, kể cả khi qty=0 (đã hoàn kho).
+        // Cash Flow widget cần giá vốn này để đảo ngược lợi nhuận chính xác khi xử lý return_sell.
+        if (evt.originalTx) {
+          evt.originalTx.fifoAvgCost = runAvgCost;
         }
       }
     }
