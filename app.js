@@ -3730,13 +3730,33 @@ function setupMobileSidebarToggle() {
   const menuToggle = document.getElementById("menuToggleBtn");
   const closeSidebar = document.getElementById("closeSidebarBtn");
   const sidebar = document.getElementById("sidebar");
+  if (!menuToggle || !sidebar) return;
 
-  menuToggle.addEventListener("click", () => {
+  menuToggle.addEventListener("click", (e) => {
+    e.stopPropagation();
     sidebar.classList.add("mobile-open");
   });
 
-  closeSidebar.addEventListener("click", () => {
-    sidebar.classList.remove("mobile-open");
+  if (closeSidebar) {
+    closeSidebar.addEventListener("click", () => {
+      sidebar.classList.remove("mobile-open");
+    });
+  }
+
+  // Tự động đóng sidebar khi bấm ra ngoài vùng sidebar trên mobile
+  document.addEventListener("click", (e) => {
+    if (sidebar.classList.contains("mobile-open")) {
+      if (!sidebar.contains(e.target) && !menuToggle.contains(e.target)) {
+        sidebar.classList.remove("mobile-open");
+      }
+    }
+  });
+
+  // Đóng sidebar khi nhấn phím Escape
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && sidebar.classList.contains("mobile-open")) {
+      sidebar.classList.remove("mobile-open");
+    }
   });
 }
 
@@ -6830,6 +6850,8 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
     let totalIn   = 0, totalOut  = 0;
     let countSell = 0, countBuy  = 0;
     let countRSell= 0, countRBuy = 0;
+    let qtySell   = 0, qtyBuy    = 0;
+    let qtyRSell  = 0, qtyRBuy   = 0;
     let realizedProfit = 0;
 
     // Build fifoMap từ TẤT CẢ giao dịch (không lọc kỳ) để tra cứu fifoAvgCost của giao dịch bán gốc
@@ -6850,11 +6872,11 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
         else                 totalOut += c.amount; // có thể âm nếu return_buy
       }
 
-      // ── Đếm loại giao dịch ──
-      if      (tx.type === 'sell')        countSell++;
-      else if (tx.type === 'buy')         countBuy++;
-      else if (tx.type === 'return_sell') countRSell++;
-      else if (tx.type === 'return_buy')  countRBuy++;
+      // ── Đếm loại giao dịch & số lượng xe ──
+      if      (tx.type === 'sell')        { countSell++;  qtySell  += qty; }
+      else if (tx.type === 'buy')         { countBuy++;   qtyBuy   += qty; }
+      else if (tx.type === 'return_sell') { countRSell++; qtyRSell += qty; }
+      else if (tx.type === 'return_buy')  { countRBuy++;  qtyRBuy  += qty; }
 
       // ── Lợi nhuận thực tế (Realized Profit) ──
       if (tx.type === 'sell') {
@@ -6892,12 +6914,12 @@ function renderMobileTransactionHistory(sortedTxs, avgCostMap) {
     const isLoss   = realizedProfit < 0;
 
     // ── Subtext mô tả cho Tiền Vào / Tiền Ra ──
-    const subIn  = countRSell > 0
-      ? `${countSell} bán (−${countRSell} hoàn)`
-      : `${countSell} giao dịch`;
-    const subOut = countRBuy > 0
-      ? `${countBuy} mua (−${countRBuy} trả NCC)`
-      : `${countBuy} giao dịch`;
+    const subIn  = qtyRSell > 0
+      ? `${qtySell} xe bán (−${qtyRSell} xe hoàn)`
+      : `${qtySell} xe bán (${countSell} đơn)`;
+    const subOut = qtyRBuy > 0
+      ? `${qtyBuy} xe nhập (−${qtyRBuy} xe trả NCC)`
+      : `${qtyBuy} xe nhập (${countBuy} đơn)`;
 
     // Dùng formatCurrency của app (đã có sẵn toàn cục)
     const fmt = (n) => {

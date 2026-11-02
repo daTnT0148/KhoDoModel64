@@ -1868,6 +1868,7 @@ body {
   .sidebar {
     transform: translateX(-100%);
     width: 260px;
+    z-index: 10000;
   }
   
   .sidebar.mobile-open {
@@ -1876,7 +1877,11 @@ body {
   }
   
   .close-sidebar-btn {
-    display: block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
   }
   
   .main-content {
@@ -1885,9 +1890,22 @@ body {
     padding-bottom: calc(16px + 64px + env(safe-area-inset-bottom, 0px)); /* chừa chỗ cho bottom nav cố định, tránh che nội dung */
   }
   
-  /* Bottom nav thay thế sidebar trên mobile — không cần nút mở sidebar nữa */
+  /* Nút menu mở Sidebar drawer trên mobile (chuyển danh mục đầu tư, quản lý vận đơn SPX) */
   .menu-toggle-btn {
-    display: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    border-radius: var(--border-radius-sm);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-main);
+    cursor: pointer;
+  }
+  .menu-toggle-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-white);
   }
   
   .transaction-forms-row {
