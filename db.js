@@ -125,16 +125,54 @@ window.addEventListener("online", () => {
 
 // ─── API calls ────────────────────────────────────────────────────────────────
 
+// Helper lấy Firebase ID Token (nếu đang đăng nhập)
+async function getValidToken(forceRefresh = false) {
+  if (typeof window.getAuthToken === "function") {
+    return await window.getAuthToken(forceRefresh);
+  }
+  if (typeof firebase !== "undefined" && firebase.auth && firebase.auth().currentUser) {
+    try {
+      return await firebase.auth().currentUser.getIdToken(forceRefresh);
+    } catch (_) {}
+  }
+  return null;
+}
+
 // Core network call, no fallback/queueing — used both by apiPost() and flushPendingOps()
 // so a replayed op goes through the exact same path as a live one.
 async function rawApiPost(action, data) {
+  let token = await getValidToken();
+  const payload = {
+    action,
+    data,
+    token: token || "",
+    key: API_SECRET_KEY || ""
+  };
+
   const res = await fetch(APPS_SCRIPT_URL, {
     method: "POST",
     headers: { "Content-Type": "text/plain" }, // Apps Script yêu cầu text/plain để tránh preflight
-    body: JSON.stringify({ action, data, key: API_SECRET_KEY })
+    body: JSON.stringify(payload)
   });
   const json = await res.json();
-  if (json.error) throw new Error(json.error);
+  if (json.error) {
+    // Nếu bị lỗi Unauthorized do token hết hạn, thử refresh token 1 lần
+    if ((json.error === "Unauthorized" || json.error.includes("token")) && token) {
+      const refreshedToken = await getValidToken(true);
+      if (refreshedToken && refreshedToken !== token) {
+        payload.token = refreshedToken;
+        const retryRes = await fetch(APPS_SCRIPT_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: JSON.stringify(payload)
+        });
+        const retryJson = await retryRes.json();
+        if (retryJson.error) throw new Error(retryJson.error);
+        return retryJson;
+      }
+    }
+    throw new Error(json.error);
+  }
   return json;
 }
 
@@ -167,10 +205,32 @@ async function apiGet() {
 
   showSyncStatus("syncing", "Đang tải dữ liệu...");
   try {
-    const url = APPS_SCRIPT_URL + "?action=getAllData&key=" + encodeURIComponent(API_SECRET_KEY) + "&t=" + Date.now();
-    const res  = await fetch(url);
-    const json = await res.json();
-    if (json.error) throw new Error(json.error);
+    let token = await getValidToken();
+    const buildUrl = (tok) => {
+      let u = APPS_SCRIPT_URL + "?action=getAllData&t=" + Date.now();
+      if (tok) u += "&token=" + encodeURIComponent(tok);
+      if (API_SECRET_KEY) u += "&key=" + encodeURIComponent(API_SECRET_KEY);
+      return u;
+    };
+
+    let res  = await fetch(buildUrl(token));
+    let json = await res.json();
+
+    if (json.error) {
+      // Nếu bị Unauthorized do token hết hạn, thử refresh token 1 lần
+      if ((json.error === "Unauthorized" || json.error.includes("token")) && token) {
+        const refreshedToken = await getValidToken(true);
+        if (refreshedToken && refreshedToken !== token) {
+          res  = await fetch(buildUrl(refreshedToken));
+          json = await res.json();
+          if (!json.error) {
+            showSyncStatus("success", "Đã tải từ Cloud ✓");
+            return json;
+          }
+        }
+      }
+      throw new Error(json.error);
+    }
     showSyncStatus("success", "Đã tải từ Cloud ✓");
     return json;
   } catch (err) {
@@ -344,15 +404,8 @@ function mergeStateFromCloud(cloudData) {
 
       // Tự động đẩy mapping cũ lên server 1 lần
       if (missingInCloud.length > 0) {
-        fetch(APPS_SCRIPT_URL, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain" },
-          body: JSON.stringify({
-            action: "syncCarImagesMappings",
-            key: API_SECRET_KEY,
-            data: missingInCloud
-          })
-        }).catch(err => console.error("Auto sync old images failed", err));
+        rawApiPost("syncCarImagesMappings", missingInCloud)
+          .catch(err => console.error("Auto sync old images failed", err));
       }
     } catch (e) { console.error("Error merging car images from cloud", e); }
   }
@@ -560,23 +613,13 @@ async function dbUploadImage(file, oldFileId = "", imgKey = "") {
       try {
         const base64 = reader.result.split(",")[1];
 
-        const res = await fetch(APPS_SCRIPT_URL, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain" },
-          body: JSON.stringify({
-            action: "uploadImage",
-            key: API_SECRET_KEY,
-            data: {
-              base64:    base64,
-              mimeType:  "image/webp",
-              fileName:  optimized.fileName,
-              oldFileId: oldFileId,
-              imgKey:    imgKey
-            }
-          })
+        const json = await rawApiPost("uploadImage", {
+          base64:    base64,
+          mimeType:  "image/webp",
+          fileName:  optimized.fileName,
+          oldFileId: oldFileId,
+          imgKey:    imgKey
         });
-
-        const json = await res.json();
 
         if (json.error) {
           showSyncStatus("error", "Upload thất bại: " + json.error);

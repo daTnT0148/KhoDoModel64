@@ -3,9 +3,11 @@
  * Deploy as Web App: Execute as Me, Anyone can access
  */
 
-const SHEET_ID        = "1VB01bVUDH-fBKwiS4JfOhiNSqsH37snzYZnHefq86Xs";
-const DRIVE_FOLDER_ID = "1eaGPgd7czUjSTBBXPsFJ1LT4ac4TlFHg";
-const SECRET_KEY      = "Kntvntd482001"; // ← PHẢI GIỐNG VỚI KEY TRONG env.js
+const SHEET_ID         = "1VB01bVUDH-fBKwiS4JfOhiNSqsH37snzYZnHefq86Xs";
+const DRIVE_FOLDER_ID  = "1eaGPgd7czUjSTBBXPsFJ1LT4ac4TlFHg";
+const FIREBASE_API_KEY  = "AIzaSyCgtdUzcEqdG2qE59WP1EO--xAgisucAsE"; // Lấy từ Firebase Web API Key
+const ALLOWED_EMAILS    = ["datcoi482001@gmail.com"]; // Danh sách email được phép truy cập kho (để rỗng [] nếu cho phép mọi user Firebase)
+const SECRET_KEY_LEGACY = "Kntvntd482001"; // Fallback tạm thời trong lúc chuyển giao
 
 function getSpreadsheet() {
   return SHEET_ID
@@ -13,14 +15,91 @@ function getSpreadsheet() {
     : SpreadsheetApp.getActiveSpreadsheet();
 }
 
-// --- CORS + Router ---
+// ─── Xác thực Firebase ID Token & Whitelist Email ───────────────────────────
+
+function verifyFirebaseToken(idToken) {
+  if (!idToken || typeof idToken !== "string" || idToken.trim() === "") return null;
+  idToken = idToken.trim();
+
+  // 1. Kiểm tra cache trong CacheService (giảm độ trễ mạng, cache 10 phút)
+  const cache = CacheService.getScriptCache();
+  const cacheKey = "fb_tok_" + (idToken.length > 32 ? idToken.slice(-32) : idToken);
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch (_) {}
+  }
+
+  // 2. Gọi Google Identity Toolkit API để xác thực chữ ký token từ Firebase Auth
+  const url = "https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=" + FIREBASE_API_KEY;
+  const options = {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify({ idToken: idToken }),
+    muteHttpExceptions: true
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(url, options);
+    if (response.getResponseCode() !== 200) {
+      return null;
+    }
+    const data = JSON.parse(response.getContentText());
+    if (data.users && data.users.length > 0) {
+      const u = data.users[0];
+      const verifiedUser = {
+        uid: u.localId,
+        email: (u.email || "").toLowerCase()
+      };
+      // Lưu cache 10 phút (600 giây)
+      cache.put(cacheKey, JSON.stringify(verifiedUser), 600);
+      return verifiedUser;
+    }
+  } catch (err) {
+    console.error("verifyFirebaseToken error:", err);
+  }
+  return null;
+}
+
+function checkAuthorization(token, key) {
+  // 1. Ưu tiên xác thực bằng Firebase ID Token (An toàn tuyệt đối)
+  if (token) {
+    const user = verifyFirebaseToken(token);
+    if (user) {
+      // Kiểm tra whitelist ALLOWED_EMAILS (nếu mảng không rỗng)
+      if (ALLOWED_EMAILS && ALLOWED_EMAILS.length > 0) {
+        const isAllowed = ALLOWED_EMAILS.some(function(em) {
+          return em.toLowerCase().trim() === user.email;
+        });
+        if (!isAllowed) {
+          return { authorized: false, error: "Email không có quyền truy cập kho này: " + user.email };
+        }
+      }
+      return { authorized: true, user: user };
+    }
+  }
+
+  // 2. Fallback tạm thời bằng SECRET_KEY cũ (giữ tương thích trong giai đoạn cập nhật)
+  if (key && SECRET_KEY_LEGACY && key === SECRET_KEY_LEGACY) {
+    return { authorized: true, user: { email: "legacy-key-user" } };
+  }
+
+  return { authorized: false, error: "Unauthorized" };
+}
+
+// ─── CORS + Router ──────────────────────────────────────────────────────────
 
 function doGet(e) {
   const action = e && e.parameter && e.parameter.action ? e.parameter.action : "getAllData";
+  const token  = e && e.parameter && e.parameter.token ? e.parameter.token : "";
   const key    = e && e.parameter && e.parameter.key ? e.parameter.key : "";
-  if (key !== SECRET_KEY) {
-    return ContentService.createTextOutput(JSON.stringify({ error: "Unauthorized" })).setMimeType(ContentService.MimeType.JSON);
+
+  const authResult = checkAuthorization(token, key);
+  if (!authResult.authorized) {
+    return ContentService.createTextOutput(JSON.stringify({ error: authResult.error || "Unauthorized" })).setMimeType(ContentService.MimeType.JSON);
   }
+
   let result;
   try {
     if (action === "getAllData") result = getAllData();
@@ -38,12 +117,20 @@ function doPost(e) {
   } catch (err) {
     return respond({ error: "Invalid JSON: " + err.message });
   }
+
   const action = body.action;
+  const token  = body.token || "";
   const key    = body.key || "";
-  if (key !== SECRET_KEY) return respond({ error: "Unauthorized" });
+
+  const authResult = checkAuthorization(token, key);
+  if (!authResult.authorized) {
+    return respond({ error: authResult.error || "Unauthorized" });
+  }
+
   let result;
   try {
     switch (action) {
+      case "getAllData":         result = getAllData();                  break;
       case "saveTransaction":    result = saveTransaction(body.data);    break;
       case "updateTransaction":  result = updateTransaction(body.data);  break;
       case "deleteTransaction":  result = deleteTransaction(body.data);  break;

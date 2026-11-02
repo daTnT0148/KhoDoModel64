@@ -136,12 +136,12 @@
           <button type="button" class="auth-setup-tab" data-setup="member">Tham gia kho</button>
         </div>
         <form id="authSetupOwnerForm" class="auth-setup-content">
-          <p class="auth-hint">Nhập URL và Secret Key từ Google Apps Script (chỉ nhập 1 lần duy nhất)</p>
+          <p class="auth-hint">Nhập Apps Script URL (xác thực bảo mật tự động qua tài khoản Firebase của bạn)</p>
           <div class="auth-input-group">
             <input type="url" id="authSetupUrl" placeholder="Apps Script URL (https://script.google.com/...)" required>
           </div>
-          <div class="auth-input-group">
-            <input type="text" id="authSetupKey" placeholder="Secret Key" required>
+          <div class="auth-input-group" style="display:none;">
+            <input type="text" id="authSetupKey" placeholder="Secret Key (Không bắt buộc)">
           </div>
           <button type="submit" class="auth-btn auth-btn-primary">Tạo kho</button>
         </form>

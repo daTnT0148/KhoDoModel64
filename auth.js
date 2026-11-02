@@ -31,6 +31,17 @@
   let _currentUser = null;
   let _teamId      = null;
 
+  // ── Helper: Lấy Firebase ID Token cho các API calls ──────────────
+  window.getAuthToken = async function (forceRefresh = false) {
+    if (!auth || !auth.currentUser) return null;
+    try {
+      return await auth.currentUser.getIdToken(forceRefresh);
+    } catch (err) {
+      console.error('[Auth] Failed to get ID token:', err);
+      return null;
+    }
+  };
+
   // ── DOM helpers ─────────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
 

@@ -1,0 +1,13 @@
+# Local Environment & Secrets
+env.js
+
+# Dependencies
+node_modules/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs & temp
+*.log
