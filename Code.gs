@@ -216,6 +216,9 @@ function sheetToObjects(sheet) {
 // --- READ ---
 
 function getAllData() {
+  // Ép ghi mọi thay đổi đang chờ trước khi đọc để luôn lấy dữ liệu mới nhất, chống đọc cache cũ
+  SpreadsheetApp.flush();
+
   const portfolioRows = sheetToObjects(getSheet("Portfolios"));
   const portfolios = portfolioRows
     .filter(r => r.portfolioId)
@@ -341,15 +344,26 @@ function updateTransaction(tx) {
 }
 
 function deleteTransaction(data) {
+  if (!data || !data.id) return { error: "Missing transaction id" };
   const sheet = getSheet("Transactions");
   const values = sheet.getDataRange().getValues();
-  for (let i = 1; i < values.length; i++) {
-    if (String(values[i][0]) === String(data.id)) {
+  const targetId = String(data.id);
+  let deletedCount = 0;
+
+  // Quét ngược từ dưới lên để xóa sạch TẤT CẢ các dòng trùng mã ID mà không lệch hàng
+  for (let i = values.length - 1; i >= 1; i--) {
+    if (String(values[i][0]) === targetId) {
       sheet.deleteRow(i + 1);
-      return { ok: true };
+      deletedCount++;
     }
   }
-  return { error: "Transaction not found: " + data.id };
+
+  // Ép Google Sheets ghi nhận ngay lập tức, không lưu cache bộ nhớ
+  SpreadsheetApp.flush();
+
+  // Luôn trả về ok: true (kể cả khi đã xóa trước đó) để đảm bảo tính Idempotent,
+  // tránh ném lỗi khiến hàng đợi offline (pendingOps) bị kẹt và gửi lại vô tận
+  return { ok: true, deletedCount: deletedCount };
 }
 
 function savePortfolio(portfolio) {

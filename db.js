@@ -267,20 +267,71 @@ function getPendingTxTouchedIds() {
   return { saveIds, deleteIds, replacePortfolioIds };
 }
 
+// ─── Tombstone (Bia mộ) cho giao dịch đã xóa ─────────────────────────────────
+// Lưu danh sách các txId đã xóa kèm thời gian (giữ 30 ngày).
+// Ngăn chặn hoàn toàn tình trạng giao dịch đã xóa bị "hồi sinh" do cache cũ của Google Sheets
+// hoặc do thiết bị khác chưa đồng bộ đẩy ngược lên.
+const TOMBSTONE_TX_KEY = "model_car_deleted_tx_ids";
+const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 ngày
+
+function loadTombstones() {
+  try {
+    const raw = localStorage.getItem(TOMBSTONE_TX_KEY);
+    const map = raw ? JSON.parse(raw) : {};
+    const now = Date.now();
+    let changed = false;
+    for (const [id, ts] of Object.entries(map)) {
+      if (now - Number(ts || 0) > TOMBSTONE_TTL_MS) {
+        delete map[id];
+        changed = true;
+      }
+    }
+    if (changed) {
+      localStorage.setItem(TOMBSTONE_TX_KEY, JSON.stringify(map));
+    }
+    return map;
+  } catch (e) {
+    console.error("[Tombstone] Failed to load deleted IDs:", e);
+    return {};
+  }
+}
+
+function recordDeletedTxId(txId) {
+  if (!txId) return;
+  const map = loadTombstones();
+  map[String(txId)] = Date.now();
+  try {
+    localStorage.setItem(TOMBSTONE_TX_KEY, JSON.stringify(map));
+  } catch (e) {
+    console.error("[Tombstone] Failed to save deleted ID:", e);
+  }
+}
+
+function isTxDeleted(txId) {
+  if (!txId) return false;
+  const map = loadTombstones();
+  return Boolean(map[String(txId)]);
+}
+
 // Merge one portfolio's local + cloud transaction arrays into a single reconciled array.
 // Rules (safety over strictness):
+//   - a tombstoned id always wins → deleted, never resurrect even if cloud still has it
 //   - a pending delete always wins → the id is dropped, even if cloud still has it
 //   - a pending save/update always wins → keep the local copy, ignore cloud's version
 //   - present on both sides → prefer whichever has the newer updatedAt (cloud if unknown)
 //   - present locally only (no pending op explains it) → KEEP IT, never silently drop
 //   - present on cloud only → adopt it (another device/session created it)
 function reconcileTransactions(localTxs, cloudTxs, pending) {
+  const tombstoneMap = loadTombstones();
   const localMap = new Map((localTxs || []).map(t => [t.id, t]));
   const cloudMap = new Map((cloudTxs || []).map(t => [t.id, t]));
   const allIds = new Set([...localMap.keys(), ...cloudMap.keys()]);
   const result = [];
 
   allIds.forEach(id => {
+    // 1. Kiểm tra Bia mộ: nếu giao dịch này đã bị xóa, tiêu diệt hoàn toàn, không hồi sinh!
+    if (tombstoneMap[id]) return;
+
     if (pending.deleteIds.has(id)) return; // honor the not-yet-synced local delete
 
     if (pending.saveIds.has(id)) {
@@ -472,6 +523,22 @@ function dbUpdateTransaction(tx) {
 }
 
 function dbDeleteTransaction(txId) {
+  // 1. Ghi nhận vào Bia mộ (Tombstone) để ngăn hồi sinh ở mọi nơi
+  recordDeletedTxId(txId);
+
+  // 2. Xóa khỏi state bộ nhớ ở tất cả portfolio (nếu có)
+  if (window.state && window.state.transactions) {
+    Object.keys(window.state.transactions).forEach(pid => {
+      if (Array.isArray(window.state.transactions[pid])) {
+        window.state.transactions[pid] = window.state.transactions[pid].filter(tx => tx.id !== txId);
+      }
+    });
+  }
+
+  // 3. Cập nhật ngay LocalStorage trên máy (không chờ mạng)
+  saveStateToLocalStorage();
+
+  // 4. Gửi yêu cầu xóa lên Cloud (nếu mất mạng sẽ tự động đưa vào pendingOps)
   return apiPost("deleteTransaction", { id: txId });
 }
 

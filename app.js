@@ -476,6 +476,16 @@ function loadStateFromLocalStorage() {
             state.tax.declarations = state.tax.declarations.filter(d => d.id !== 'S3a-HKD');
           }
         }
+
+        // Loại bỏ mọi giao dịch đã nằm trong Bia mộ (Tombstone) khỏi cache LocalStorage
+        if (state.transactions && typeof loadTombstones === "function") {
+          const tombstones = loadTombstones();
+          Object.keys(state.transactions).forEach(pid => {
+            if (Array.isArray(state.transactions[pid])) {
+              state.transactions[pid] = state.transactions[pid].filter(tx => !tombstones[tx.id]);
+            }
+          });
+        }
       }
     } catch (e) {
       console.error("Lỗi khi đọc dữ liệu LocalStorage, sử dụng dữ liệu mặc định", e);
