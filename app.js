@@ -7165,23 +7165,36 @@ window.TrackingModule = (function() {
   let _isRefreshing = false;
   let _hasAutoCheckedStartup = false; // Đánh dấu tự động kiểm tra lúc mở app (chỉ chạy 1 lần)
 
-  // --- Cache helpers ---
+  // --- Cache helpers (Lưu vào localStorage để không bị mất khi đóng trình duyệt hoặc tải lại app) ---
   function getCachedStatus(tn) {
     if (!tn) return null;
     try {
-      const raw = sessionStorage.getItem(CACHE_PREFIX + tn);
+      let raw = localStorage.getItem(CACHE_PREFIX + tn);
+      if (!raw) {
+        // Fallback đọc từ sessionStorage cũ (nếu có) và migrate sang localStorage
+        raw = sessionStorage.getItem(CACHE_PREFIX + tn);
+        if (raw) {
+          localStorage.setItem(CACHE_PREFIX + tn, raw);
+        }
+      }
       if (!raw) return null;
-      const cached = JSON.parse(raw);
-      if (Date.now() - (cached._cachedAt || 0) > CACHE_TTL) return null;
-      return cached;
+      return JSON.parse(raw);
     } catch(e) { return null; }
+  }
+
+  function isCacheExpired(cached) {
+    if (!cached || cached.error) return true;
+    // Đơn đã kết thúc (giao thành công hoặc trả về/hủy): KHÔNG BAO GIỜ HẾT HẠN
+    if (isCompletedMilestone(cached)) return false;
+    // Đơn đang xử lý: hết hạn sau 15 phút để dò lại trạng thái mới nhất
+    return (Date.now() - (cached._cachedAt || 0)) > CACHE_TTL;
   }
 
   function setCachedStatus(tn, data) {
     if (!tn || !data) return;
     try {
       const obj = Object.assign({}, data, { _cachedAt: Date.now() });
-      sessionStorage.setItem(CACHE_PREFIX + tn, JSON.stringify(obj));
+      localStorage.setItem(CACHE_PREFIX + tn, JSON.stringify(obj));
     } catch(e) { /* ignore */ }
   }
 
@@ -7509,10 +7522,10 @@ window.TrackingModule = (function() {
     try {
       const allTxs = getTrackingTransactions();
       
-      // Lấy danh sách mã chưa kết thúc (hoặc chưa có cache)
+      // Lấy danh sách mã chưa kết thúc (hoặc chưa có cache, hoặc cache đơn đang giao đã quá hạn)
       const toRefreshTxs = allTxs.filter(tx => {
         const cached = getCachedStatus(tx.trackingNumber);
-        return !cached || cached.error || !isCompletedMilestone(cached);
+        return !cached || cached.error || isCacheExpired(cached);
       });
 
       // Lọc trùng mã vận đơn
@@ -7580,20 +7593,29 @@ window.TrackingModule = (function() {
 
   // --- Tự động kiểm tra SPX 1 lần khi vừa mở ứng dụng (Startup Auto-check) ---
   function autoCheckOnStartup() {
+    // 1. Cập nhật số liệu từ cache ngay lập tức để người dùng thấy số CHÍNH XÁC ngay từ giây đầu tiên
+    updateNavBadge();
+
+    // 2. Nếu đang mở tab tracking thì vẽ lại ngay từ cache, không để người dùng thấy danh sách sai
+    const trackingPanel = document.getElementById('panel-tracking');
+    if (trackingPanel && trackingPanel.classList.contains('active')) {
+      render();
+    }
+
     if (_hasAutoCheckedStartup) return;
     _hasAutoCheckedStartup = true;
 
-    // Cập nhật số liệu từ cache ngay lập tức để người dùng thấy số
-    updateNavBadge();
-
-    // Chạy dò trạng thái SPX mới nhất ở chế độ nền
+    // 3. Chạy dò trạng thái SPX mới nhất ở chế độ nền (chỉ kiểm tra các đơn chưa xong hoặc cache hết hạn)
     setTimeout(() => {
       const allTxs = getTrackingTransactions();
-      if (allTxs.length > 0) {
-        console.log('[Tracking] Tự động dò trạng thái SPX lúc khởi động cho', allTxs.length, 'vận đơn...');
+      const needRefresh = allTxs.some(tx => {
+        const cached = getCachedStatus(tx.trackingNumber);
+        return !cached || cached.error || isCacheExpired(cached);
+      });
+      if (needRefresh) {
         refreshAll({ silent: true });
       }
-    }, 1200); // Đợi 1.2s sau khi app nạp dữ liệu xong để không chặn giao diện chính
+    }, 800);
   }
 
   // --- Cập nhật badge trên menu và 3 chấm tròn trạng thái trên navbar ---
