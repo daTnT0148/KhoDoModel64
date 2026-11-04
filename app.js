@@ -7339,7 +7339,7 @@ window.TrackingModule = (function() {
       );
     }
 
-    // Lọc theo trạng thái: chỉ còn 2 lựa chọn 'active' (Đang xử lý) hoặc 'completed' (Đã kết thúc)
+    // Lọc theo trạng thái: 'active' (Đang xử lý), 'completed' (Đã kết thúc), 'returned' (Hàng hoàn)
     filteredTxs = filteredTxs.filter(tx => {
       const cached = getCachedStatus(tx.trackingNumber);
       // Chưa có dữ liệu kiểm tra -> mặc định coi là "đang xử lý"
@@ -7348,12 +7348,14 @@ window.TrackingModule = (function() {
       const isDone = isCompletedMilestone(cached);
       if (_currentFilter === 'active') {
         return !isDone;
+      } else if (_currentFilter === 'returned') {
+        // Lọc chuyên biệt: chỉ các đơn giao không thành công / bị trả về / hoàn
+        return isFailedOrReturned(cached);
       } else {
-        // Giao thành công: CHỈ LƯU VÀ HIỂN THỊ TRONG 1 NGÀY (HÔM NAY), qua hôm sau tự động ẩn
+        // 'completed' (Đã kết thúc): Giao thành công (hôm nay) hoặc đơn hoàn
         if (isDelivered(cached)) {
           return isDeliveredToday(cached);
         }
-        // Đơn bị hoàn về / hủy: vẫn giữ lại trong tab Đã kết thúc để đối soát
         return isFailedOrReturned(cached);
       }
     });
@@ -7638,15 +7640,31 @@ window.TrackingModule = (function() {
 
   // --- Khởi tạo các sự kiện giao diện ---
   function init() {
-    // Click vào 3 chấm tròn trên Navbar -> Chuyển nhanh sang tab Theo dõi vận đơn
+    // Click vào 3 chấm tròn trên Navbar -> Chuyển nhanh sang tab Theo dõi vận đơn (kèm lọc theo màu chấm)
     const navDots = document.getElementById('navTrackingDots');
     if (navDots) {
+      const openTrackingWithFilter = (targetFilter) => {
+        const trackingNavBtn = document.querySelector('.nav-link[data-tab="tracking"]');
+        if (trackingNavBtn) trackingNavBtn.click();
+        if (targetFilter) {
+          _currentFilter = targetFilter;
+          const filterEl = document.getElementById('trackingFilterStatus');
+          if (filterEl) filterEl.value = targetFilter;
+          render();
+        }
+      };
+
+      const dotYellow = navDots.querySelector('.dot-yellow');
+      const dotGreen = navDots.querySelector('.dot-green');
+      const dotRed = navDots.querySelector('.dot-red');
+
+      if (dotYellow) dotYellow.addEventListener('click', function(e) { e.stopPropagation(); openTrackingWithFilter('active'); });
+      if (dotGreen) dotGreen.addEventListener('click', function(e) { e.stopPropagation(); openTrackingWithFilter('completed'); });
+      if (dotRed) dotRed.addEventListener('click', function(e) { e.stopPropagation(); openTrackingWithFilter('returned'); });
+
       navDots.addEventListener('click', function(e) {
         e.preventDefault();
-        const trackingNavBtn = document.querySelector('.nav-link[data-tab="tracking"]');
-        if (trackingNavBtn) {
-          trackingNavBtn.click();
-        }
+        openTrackingWithFilter();
       });
     }
 
