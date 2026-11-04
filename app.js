@@ -7224,13 +7224,32 @@ window.TrackingModule = (function() {
   function isFailedOrReturned(item) {
     if (!item) return false;
     const code = Number(item.milestoneCode);
-    if (code === 9) return true; // 9: SPX Returned/Cancelled
+    if (code === 9 || code === 10) return true; // 9: SPX Return in progress, 10: SPX Delivery Unsuccessful / Returned to Sender
     const status = String(item.status || '').toLowerCase().trim();
-    if (status === 'returned' || status === 'return_completed' || status === 'cancelled' || status === 'lost' || status === 'damaged') return true;
+    if (
+      status === 'returned' ||
+      status === 'return_completed' ||
+      status === 'cancelled' ||
+      status === 'lost' ||
+      status === 'damaged' ||
+      status.includes('delivery unsuccessful') ||
+      status.includes('returned to sender') ||
+      status.includes('unsuccessful')
+    ) return true;
     const trackCode = String(item.trackingCode || '').toUpperCase().trim();
-    if (trackCode === 'F950' || trackCode === 'F960' || trackCode === 'F970') return true;
+    if (trackCode === 'F950' || trackCode === 'F960' || trackCode === 'F970' || trackCode === 'F999' || trackCode === 'F680') return true;
     const desc = String(item.description || '').toLowerCase();
-    if (desc.includes('trả về') || desc.includes('chuyển hoàn') || desc.includes('hủy') || desc.includes('giao không thành công') || desc.includes('hoàn hàng')) return true;
+    if (
+      desc.includes('trả về') ||
+      desc.includes('chuyển hoàn') ||
+      desc.includes('hủy') ||
+      desc.includes('giao không thành công') ||
+      desc.includes('hoàn hàng') ||
+      desc.includes('hoàn trả') ||
+      desc.includes('trả hàng') ||
+      desc.includes('returned') ||
+      desc.includes('không thành công')
+    ) return true;
     return false;
   }
 
