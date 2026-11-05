@@ -40,28 +40,6 @@
   </script>
   <style>
     @media print {
-      /* Ẩn toàn bộ giao diện ứng dụng */
-      body > *,
-      .app-container,
-      .sidebar,
-      .main-content,
-      .modal-backdrop {
-        display: none !important;
-      }
-
-      /* Chỉ hiển thị vùng in tờ khai */
-      body.printing-tax #taxPrintArea {
-        display: block !important;
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        margin: 0;
-        padding: 0;
-        background: white !important;
-        color: black !important;
-      }
-
       @page {
         size: A4 portrait;
         margin: 15mm 10mm;
@@ -69,11 +47,80 @@
 
       body {
         background: white !important;
-        margin: 0;
-        padding: 0;
+        margin: 0 !important;
+        padding: 0 !important;
       }
 
-      /* Giữ nguyên style của tờ khai */
+      /* Ẩn toàn bộ giao diện app ngoại trừ modal xem trước tờ khai */
+      body * {
+        visibility: hidden;
+      }
+
+      #taxPreviewModal,
+      #taxPreviewModal *,
+      #taxPrintArea,
+      #taxPrintArea * {
+        visibility: visible !important;
+      }
+
+      #taxPreviewModal {
+        position: static !important;
+        display: block !important;
+        background: transparent !important;
+        width: 100% !important;
+        height: auto !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+
+      #taxPreviewModal .modal-card {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        max-width: 100% !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+
+      .modal-header,
+      .tax-preview-actions,
+      .modal-close-btn {
+        display: none !important;
+      }
+
+      .tax-preview-container {
+        padding: 0 !important;
+        background: transparent !important;
+        max-height: none !important;
+        overflow: visible !important;
+      }
+
+      .tax-print-area {
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        box-shadow: none !important;
+        background: transparent !important;
+      }
+
+      .tax-month-page {
+        width: 100% !important;
+        min-height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        box-shadow: none !important;
+        background: white !important;
+        page-break-after: always !important;
+        break-after: page !important;
+      }
+
+      .tax-month-page:last-child {
+        page-break-after: auto !important;
+        break-after: auto !important;
+      }
+
+      /* Giữ nguyên màu & đường nét của bảng tờ khai */
       .tax-print-area * {
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;

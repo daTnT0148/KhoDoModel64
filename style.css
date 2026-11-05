@@ -3231,17 +3231,35 @@ body {
 /* PREVIEW & PRINT MEDIA QUERIES */
 /* ============================================================ */
 
-/* Khu vực tờ khai (giả lập khổ A4 trên modal) */
+/* Khu vực tờ khai (giả lập các trang A4 trên modal) */
 .tax-print-area {
+  background: transparent;
+  color: black;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0;
+  box-shadow: none;
+  font-family: "Times New Roman", Times, serif;
+  box-sizing: border-box;
+}
+
+.tax-month-page {
   background: white;
   color: black;
   width: 210mm;
   min-height: 297mm;
-  margin: 0 auto;
+  margin: 0 auto 24px auto;
   padding: 20mm;
-  box-shadow: 0 0 10px rgba(0,0,0,0.1);
-  font-family: "Times New Roman", Times, serif;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.15);
   box-sizing: border-box;
+  page-break-after: always;
+  break-after: page;
+}
+
+.tax-month-page:last-child {
+  margin-bottom: 0;
+  page-break-after: auto;
+  break-after: auto;
 }
 
 .tax-print-area .header-section {
@@ -3372,6 +3390,22 @@ body {
     margin: 0;
     padding: 0;
     box-shadow: none;
+    background: transparent !important;
+  }
+
+  .tax-month-page {
+    width: 100% !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+
+  .tax-month-page:last-child {
+    page-break-after: auto !important;
+    break-after: auto !important;
   }
 
   .modal-header,
