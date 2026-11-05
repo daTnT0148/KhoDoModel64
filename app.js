@@ -3038,8 +3038,8 @@ function confirmRedirectToReturnFormIfNeeded(notes) {
   return true; // hủy submit hiện tại
 }
 
-// CẢNH BÁO 3: phát hiện giao dịch trùng lặp — cùng type, xe, ngày, giá, số lượng
-function isDuplicateTransaction(type, modelName, brand, color, packaging, date, price, qty) {
+// CẢNH BÁO 3: phát hiện giao dịch trùng lặp — cùng type, xe, ngày, giá, số lượng, mã vận đơn
+function isDuplicateTransaction(type, modelName, brand, color, packaging, date, price, qty, trackingNumber) {
   const txs = state.transactions[state.activePortfolioId] || [];
   const norm = (s) => String(s || "").trim().toLowerCase();
 
@@ -3052,7 +3052,18 @@ function isDuplicateTransaction(type, modelName, brand, color, packaging, date, 
     if (tx.date !== date) return false;
     if (Number(tx.qty) !== Number(qty)) return false;
     const txPrice = type === "buy" ? Number(tx.unitCost) : Number(tx.unitPrice);
-    return txPrice === Number(price);
+    if (txPrice !== Number(price)) return false;
+
+    // Kiểm tra mã vận đơn (trackingNumber):
+    // 1 xe cùng màu, mã, số lượng, ngày là bình thường (khác đơn/khác kiện).
+    // Nếu có mã vận đơn ở giao dịch hiện tại hoặc giao dịch trong hệ thống, bắt buộc phải so sánh mã vận đơn.
+    const currentTracking = norm(trackingNumber);
+    const existingTracking = norm(tx.trackingNumber);
+    if (currentTracking || existingTracking) {
+      return currentTracking === existingTracking;
+    }
+
+    return true;
   });
 }
 
@@ -3189,15 +3200,16 @@ function setupFormSubmissions() {
     // CẢNH BÁO 2: ghi chú có vẻ nói về trả hàng → gợi ý dùng form Trả hàng thay thế
     if (confirmRedirectToReturnFormIfNeeded(notes)) return;
 
-    // CẢNH BÁO 3: phát hiện giao dịch trùng lặp (cùng xe, ngày, giá, số lượng)
-    if (isDuplicateTransaction("sell", modelName, brand, color, packaging, date, unitPrice, qty)) {
-      if (!confirm("⚠️ Có vẻ bạn đã nhập giao dịch này rồi (cùng xe, ngày, giá, số lượng). Bạn có chắc muốn nhập thêm không?")) {
+    // Mã vận đơn SPX (không bắt buộc)
+    const trackingNumber = (document.getElementById("sellTrackingNumber").value || "").trim();
+
+    // CẢNH BÁO 3: phát hiện giao dịch trùng lặp (cùng xe, ngày, giá, số lượng, mã vận đơn)
+    if (isDuplicateTransaction("sell", modelName, brand, color, packaging, date, unitPrice, qty, trackingNumber)) {
+      const trackingMsg = trackingNumber ? `, mã vận đơn: ${trackingNumber}` : "";
+      if (!confirm(`⚠️ Có vẻ bạn đã nhập giao dịch này rồi (cùng xe, ngày, giá, số lượng${trackingMsg}). Bạn có chắc muốn nhập thêm không?`)) {
         return;
       }
     }
-
-    // Mã vận đơn SPX (không bắt buộc)
-    const trackingNumber = (document.getElementById("sellTrackingNumber").value || "").trim();
 
     const newTx = {
       id: generateUniqueId("tx"),
