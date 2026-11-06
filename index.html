@@ -1578,14 +1578,20 @@
         <h3><i data-lucide="printer"></i> Xem trước Tờ khai</h3>
         <button class="modal-close-btn" onclick="closeTaxPreview()">&times;</button>
       </div>
-      <div class="tax-preview-actions" style="padding:16px; border-bottom:1px solid var(--card-border); display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.2);">
-        <p style="font-size:13px;color:var(--text-muted);margin:0;">Xem trước tờ khai. Nhấn <b>Tải về</b> để lưu tờ khai dưới dạng file ZIP gồm Excel và PDF.</p>
-        <div style="display:flex; gap:12px;">
-          <button class="btn btn-secondary" onclick="downloadTaxPdf()" id="exportPdfBtn">
+      <div class="tax-preview-actions" style="padding:16px; border-bottom:1px solid var(--card-border); display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.2); flex-wrap:wrap; gap:12px;">
+        <p style="font-size:13px;color:var(--text-muted);margin:0;">Xem trước tờ khai. Bạn có thể tải trực tiếp file <b>Excel</b>, file <b>PDF</b> hoặc trọn bộ <b>ZIP</b>.</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-sm" onclick="downloadTaxPdf()" id="printTaxBtn" title="In tờ khai qua máy in / trình duyệt">
             <i data-lucide="printer"></i> In
           </button>
-          <button class="btn btn-primary" onclick="downloadTaxExcel()" id="exportExcelBtn">
-            <i data-lucide="download"></i> Tải về
+          <button class="btn btn-secondary btn-sm" onclick="downloadTaxPdfFile()" id="exportPdfBtn" title="Tải trực tiếp 1 bản PDF">
+            <i data-lucide="file-text"></i> Tải PDF
+          </button>
+          <button class="btn btn-primary btn-sm" onclick="downloadTaxExcel()" id="exportExcelBtn" title="Tải trực tiếp 1 bản Excel (.xlsx)">
+            <i data-lucide="file-spreadsheet"></i> Tải Excel
+          </button>
+          <button class="btn btn-secondary btn-sm" onclick="downloadTaxZip()" id="exportZipBtn" title="Tải cả Excel và PDF trong 1 file ZIP">
+            <i data-lucide="archive"></i> Tải ZIP
           </button>
         </div>
       </div>

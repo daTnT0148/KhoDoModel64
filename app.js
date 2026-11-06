@@ -5377,7 +5377,7 @@ function buildPeriodicTaxRows(txs, reportPeriod) {
     monthPages.push({
       month: month + 1,
       year: year,
-      label: `Tháng ${month + 1}/${year}`,
+      label: `Tháng ${month + 1}-${year}`,
       rows: monthRows
     });
 
@@ -5453,7 +5453,7 @@ function buildEachTransactionTaxRows(txs, reportPeriod) {
     monthPages.push({
       month: month + 1,
       year: year,
-      label: `Tháng ${month + 1}/${year}`,
+      label: `Tháng ${month + 1}-${year}`,
       rows: monthRows
     });
 
@@ -5686,384 +5686,311 @@ function downloadTaxPdf() {
 }
 
 
-// ─── Tải tờ khai ra file Excel ───────────────────────────────────────────
+// ─── Tạo Workbook Excel đa trang theo từng tháng ──────────────────────────
+async function generateTaxExcelWorkbook(decl, txs, info) {
+  const monthPages = buildTaxRows(decl, txs);
+
+  const fmtDate = (iso) => {
+    if (!iso) return '';
+    const p = iso.split('-');
+    return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : iso;
+  };
+
+  const sanitizeSheetName = (name) => {
+    return String(name || 'Sheet')
+      .replace(/[*?:\\/\[\]]/g, '-')
+      .trim()
+      .substring(0, 31);
+  };
+
+  const dateNow = new Date();
+  const signDate = `Ngày ${dateNow.getDate()} tháng ${dateNow.getMonth() + 1} năm ${dateNow.getFullYear()}`;
+
+  const workbook = new ExcelJS.Workbook();
+
+  const setStyle = (cell, options) => {
+    cell.font = { name: 'Times New Roman', size: options.size || 12, bold: options.bold || false, italic: options.italic || false };
+    cell.alignment = { vertical: 'middle', horizontal: options.align || 'left', wrapText: true };
+  };
+  const setBrd = (cell) => {
+    cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
+  };
+
+  // Tạo 1 sheet cho mỗi tháng
+  monthPages.forEach((page) => {
+    const rawName = page.label || `Tháng ${page.month}-${page.year}`;
+    const sheetName = sanitizeSheetName(rawName);
+    const worksheet = workbook.addWorksheet(sheetName);
+
+    worksheet.getColumn(1).width = 25;
+    worksheet.getColumn(2).width = 45;
+    worksheet.getColumn(3).width = 25;
+
+    const periodStr = page.month && page.year
+      ? `Tháng ${page.month} năm ${page.year}`
+      : `${fmtDate(decl.reportPeriod.from)} đến ${fmtDate(decl.reportPeriod.to)}`;
+
+    let r1 = worksheet.getRow(1);
+    r1.getCell(1).value = `HỘ, CÁ NHÂN KINH DOANH: ${info.businessName || ''}`;
+    r1.getCell(3).value = `Mẫu số ${decl.id}`;
+    setStyle(r1.getCell(1), {bold: true, size: 12});
+    setStyle(r1.getCell(3), {bold: true, size: 12, align: 'center'});
+
+    let r2 = worksheet.getRow(2);
+    r2.getCell(1).value = `Mã số thuế: ${info.taxCode || ''}`;
+    r2.getCell(3).value = `(Kèm theo Thông tư số 152/2025/TT-BTC ngày 31 tháng 12 năm 2025 của Bộ trưởng Bộ Tài chính)`;
+    setStyle(r2.getCell(1), {bold: true, size: 12});
+    setStyle(r2.getCell(3), {size: 11, italic: true, align: 'center'});
+    r2.height = 35;
+
+    let r3 = worksheet.getRow(3);
+    r3.getCell(1).value = `Địa chỉ: ${info.address || ''}`;
+    setStyle(r3.getCell(1), {bold: true, size: 12});
+
+    let r6 = worksheet.getRow(6);
+    worksheet.mergeCells('A6:C6');
+    r6.getCell(1).value = `SỔ CHI TIẾT DOANH THU BÁN HÀNG HÓA, DỊCH VỤ`;
+    setStyle(r6.getCell(1), {bold: true, size: 14, align: 'center'});
+
+    let r7 = worksheet.getRow(7);
+    worksheet.mergeCells('A7:C7');
+    r7.getCell(1).value = `Địa điểm kinh doanh: ${info.address || ''}`;
+    setStyle(r7.getCell(1), {size: 12, align: 'center'});
+
+    let r8 = worksheet.getRow(8);
+    worksheet.mergeCells('A8:C8');
+    r8.getCell(1).value = `Kỳ kê khai: ${periodStr}`;
+    setStyle(r8.getCell(1), {size: 12, align: 'center'});
+
+    let r9 = worksheet.getRow(9);
+    worksheet.mergeCells('A9:C9');
+    r9.getCell(1).value = `Đơn vị tính: VNĐ`;
+    setStyle(r9.getCell(1), {size: 12, italic: true, align: 'right'});
+
+    let r10 = worksheet.getRow(10);
+    r10.getCell(1).value = 'Ngày\ntháng';
+    r10.getCell(2).value = 'Giao dịch';
+    r10.getCell(3).value = 'Số tiền';
+    [1,2,3].forEach(c => { setStyle(r10.getCell(c), {bold: true, align: 'center'}); setBrd(r10.getCell(c)); });
+    r10.height = 30;
+
+    let r11 = worksheet.getRow(11);
+    r11.getCell(1).value = 'A';
+    r11.getCell(2).value = 'B';
+    r11.getCell(3).value = '1';
+    [1,2,3].forEach(c => { setStyle(r11.getCell(c), {bold: true, align: 'center'}); setBrd(r11.getCell(c)); });
+
+    const rows = page.rows.map(r => ({
+      date: fmtDate(r.date),
+      description: r.description,
+      amount: r.amount
+    }));
+
+    let currentRow = 12;
+    rows.forEach(r => {
+      let rData = worksheet.getRow(currentRow);
+      rData.getCell(1).value = r.date;
+      rData.getCell(2).value = r.description;
+      rData.getCell(3).value = r.amount;
+      setStyle(rData.getCell(1), {align: 'center'});
+      setStyle(rData.getCell(2), {align: 'left'});
+      setStyle(rData.getCell(3), {align: 'right'});
+      rData.getCell(3).numFmt = '#,##0';
+      [1,2,3].forEach(c => setBrd(rData.getCell(c)));
+      currentRow++;
+    });
+
+    const total = rows.reduce((s, r) => s + r.amount, 0);
+    let rTotal = worksheet.getRow(currentRow);
+    worksheet.mergeCells(`A${currentRow}:B${currentRow}`);
+    rTotal.getCell(1).value = 'Tổng cộng';
+    rTotal.getCell(3).value = total;
+    setStyle(rTotal.getCell(1), {bold: true, align: 'center'});
+    setStyle(rTotal.getCell(3), {bold: true, align: 'right'});
+    rTotal.getCell(3).numFmt = '#,##0';
+    setBrd(rTotal.getCell(1));
+    setBrd(rTotal.getCell(3));
+
+    let rSign = worksheet.getRow(currentRow + 2);
+    worksheet.mergeCells(`B${currentRow+2}:C${currentRow+2}`);
+    rSign.getCell(2).value = signDate;
+    setStyle(rSign.getCell(2), {italic: true, align: 'center'});
+
+    let rSign2 = worksheet.getRow(currentRow + 3);
+    worksheet.mergeCells(`B${currentRow+3}:C${currentRow+3}`);
+    rSign2.getCell(2).value = `NGƯỜI ĐẠI DIỆN HỘ KINH DOANH/\nCÁ NHÂN KINH DOANH\n(Ký, họ tên, đóng dấu)`;
+    setStyle(rSign2.getCell(2), {bold: true, align: 'center'});
+    rSign2.height = 60;
+
+    worksheet.pageSetup = {
+      paperSize: 9, // A4
+      orientation: 'portrait',
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+      margins: { left: 0.7, right: 0.7, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 }
+    };
+  });
+
+  return workbook;
+}
+
+// ─── Tải trực tiếp file Excel (.xlsx) ───────────────────────────────────
 async function downloadTaxExcel() {
   const targetId = _activeTaxDeclarationId;
   if (!targetId || !state.tax) return;
   const declarations = state.tax.declarations || [];
   const decl = declarations.find(d => d.id === targetId);
   if (!decl) return;
-  const info = state.tax.info;
+  const info = state.tax.info || {};
 
   const btn = document.getElementById('exportExcelBtn');
-  const oldHTML = btn.innerHTML;
-  btn.innerHTML = `<i data-lucide="loader-2" class="lucide-spin"></i> Đang tạo file...`;
-  btn.disabled = true;
-  if (window.lucide) lucide.createIcons();
+  const oldHTML = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.innerHTML = `<i data-lucide="loader-2" class="lucide-spin"></i> Đang tạo Excel...`;
+    btn.disabled = true;
+    if (window.lucide) lucide.createIcons();
+  }
 
   try {
     const txs = getFilteredSalesTransactions(decl.reportPeriod.from, decl.reportPeriod.to, decl.salesChannel);
-    const monthPages = buildTaxRows(decl, txs);
-
-    const fmtDate = (iso) => {
-      if (!iso) return '';
-      const p = iso.split('-');
-      return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : iso;
-    };
-
-    const dateNow = new Date();
-    const signDate = `Ngày ${dateNow.getDate()} tháng ${dateNow.getMonth() + 1} năm ${dateNow.getFullYear()}`;
-
-    const workbook = new ExcelJS.Workbook();
-
-    const setStyle = (cell, options) => {
-      cell.font = { name: 'Times New Roman', size: options.size || 12, bold: options.bold || false, italic: options.italic || false };
-      cell.alignment = { vertical: 'middle', horizontal: options.align || 'left', wrapText: true };
-    };
-    const setBrd = (cell) => {
-      cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
-    };
-
-    // Tạo 1 sheet cho mỗi tháng
-    monthPages.forEach((page, pageIdx) => {
-      const sheetName = page.label || `Tháng ${page.month}`;
-      const worksheet = workbook.addWorksheet(sheetName);
-
-      worksheet.getColumn(1).width = 25;
-      worksheet.getColumn(2).width = 45;
-      worksheet.getColumn(3).width = 25;
-
-      const periodStr = page.month && page.year
-        ? `Tháng ${page.month} năm ${page.year}`
-        : `${fmtDate(decl.reportPeriod.from)} đến ${fmtDate(decl.reportPeriod.to)}`;
-
-      let r1 = worksheet.getRow(1);
-      r1.getCell(1).value = `HỘ, CÁ NHÂN KINH DOANH: ${info.businessName || ''}`;
-      r1.getCell(3).value = `Mẫu số ${decl.id}`;
-      setStyle(r1.getCell(1), {bold: true, size: 12});
-      setStyle(r1.getCell(3), {bold: true, size: 12, align: 'center'});
-
-      let r2 = worksheet.getRow(2);
-      r2.getCell(1).value = `Mã số thuế: ${info.taxCode || ''}`;
-      r2.getCell(3).value = `(Kèm theo Thông tư số 152/2025/TT-BTC ngày 31 tháng 12 năm 2025 của Bộ trưởng Bộ Tài chính)`;
-      setStyle(r2.getCell(1), {bold: true, size: 12});
-      setStyle(r2.getCell(3), {size: 11, italic: true, align: 'center'});
-      r2.height = 35;
-
-      let r3 = worksheet.getRow(3);
-      r3.getCell(1).value = `Địa chỉ: ${info.address || ''}`;
-      setStyle(r3.getCell(1), {bold: true, size: 12});
-
-      let r6 = worksheet.getRow(6);
-      worksheet.mergeCells('A6:C6');
-      r6.getCell(1).value = `SỔ CHI TIẾT DOANH THU BÁN HÀNG HÓA, DỊCH VỤ`;
-      setStyle(r6.getCell(1), {bold: true, size: 14, align: 'center'});
-
-      let r7 = worksheet.getRow(7);
-      worksheet.mergeCells('A7:C7');
-      r7.getCell(1).value = `Địa điểm kinh doanh: ${info.address || ''}`;
-      setStyle(r7.getCell(1), {size: 12, align: 'center'});
-
-      let r8 = worksheet.getRow(8);
-      worksheet.mergeCells('A8:C8');
-      r8.getCell(1).value = `Kỳ kê khai: ${periodStr}`;
-      setStyle(r8.getCell(1), {size: 12, align: 'center'});
-
-      let r9 = worksheet.getRow(9);
-      worksheet.mergeCells('A9:C9');
-      r9.getCell(1).value = `Đơn vị tính: VNĐ`;
-      setStyle(r9.getCell(1), {size: 12, italic: true, align: 'right'});
-
-      let r10 = worksheet.getRow(10);
-      r10.getCell(1).value = 'Ngày\ntháng';
-      r10.getCell(2).value = 'Giao dịch';
-      r10.getCell(3).value = 'Số tiền';
-      [1,2,3].forEach(c => { setStyle(r10.getCell(c), {bold: true, align: 'center'}); setBrd(r10.getCell(c)); });
-      r10.height = 30;
-
-      let r11 = worksheet.getRow(11);
-      r11.getCell(1).value = 'A';
-      r11.getCell(2).value = 'B';
-      r11.getCell(3).value = '1';
-      [1,2,3].forEach(c => { setStyle(r11.getCell(c), {bold: true, align: 'center'}); setBrd(r11.getCell(c)); });
-
-      const rows = page.rows.map(r => ({
-        date: fmtDate(r.date),
-        description: r.description,
-        amount: r.amount
-      }));
-
-      let currentRow = 12;
-      rows.forEach(r => {
-        let rData = worksheet.getRow(currentRow);
-        rData.getCell(1).value = r.date;
-        rData.getCell(2).value = r.description;
-        rData.getCell(3).value = r.amount;
-        setStyle(rData.getCell(1), {align: 'center'});
-        setStyle(rData.getCell(2), {align: 'left'});
-        setStyle(rData.getCell(3), {align: 'right'});
-        rData.getCell(3).numFmt = '#,##0';
-        [1,2,3].forEach(c => setBrd(rData.getCell(c)));
-        currentRow++;
-      });
-
-      const total = rows.reduce((s, r) => s + r.amount, 0);
-      let rTotal = worksheet.getRow(currentRow);
-      worksheet.mergeCells(`A${currentRow}:B${currentRow}`);
-      rTotal.getCell(1).value = 'Tổng cộng';
-      rTotal.getCell(3).value = total;
-      setStyle(rTotal.getCell(1), {bold: true, align: 'center'});
-      setStyle(rTotal.getCell(3), {bold: true, align: 'right'});
-      rTotal.getCell(3).numFmt = '#,##0';
-      setBrd(rTotal.getCell(1));
-      setBrd(rTotal.getCell(3));
-
-      let rSign = worksheet.getRow(currentRow + 2);
-      worksheet.mergeCells(`B${currentRow+2}:C${currentRow+2}`);
-      rSign.getCell(2).value = signDate;
-      setStyle(rSign.getCell(2), {italic: true, align: 'center'});
-
-      let rSign2 = worksheet.getRow(currentRow + 3);
-      worksheet.mergeCells(`B${currentRow+3}:C${currentRow+3}`);
-      rSign2.getCell(2).value = `NGƯỜI ĐẠI DIỆN HỘ KINH DOANH/\nCÁ NHÂN KINH DOANH\n(Ký, họ tên, đóng dấu)`;
-      setStyle(rSign2.getCell(2), {bold: true, align: 'center'});
-      rSign2.height = 60;
-
-      worksheet.pageSetup = {
-        paperSize: 9,
-        orientation: 'portrait',
-        fitToPage: true,
-        fitToWidth: 1,
-        fitToHeight: 0,
-        margins: { left: 0.7, right: 0.7, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 }
-      };
-    });
+    const workbook = await generateTaxExcelWorkbook(decl, txs, info);
 
     const excelBuffer = await workbook.xlsx.writeBuffer();
+    const excelBlob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const fileName = `To_Khai_${decl.id}_${new Date().toISOString().slice(0, 10)}.xlsx`;
 
-    // Tạo PDF từ vùng preview HTML
-    const printArea = document.getElementById('taxPrintArea');
-    let pdfBlob = null;
-    if (printArea && printArea.innerHTML.trim() && typeof html2pdf !== 'undefined') {
-      pdfBlob = await html2pdf().set({
-        margin: [10, 10, 10, 10],
-        filename: `To_Khai_${decl.id}.pdf`,
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-      }).from(printArea).outputPdf('blob');
-    }
-
-    // Đóng gói vào ZIP
-    const zip = new JSZip();
-    const fileName = `To_Khai_${decl.id}_${new Date().toISOString().slice(0,10)}`;
-    zip.file(`${fileName}.xlsx`, excelBuffer);
-    if (pdfBlob) zip.file(`${fileName}.pdf`, pdfBlob);
-
-    const zipBlob = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(zipBlob);
+    const url = URL.createObjectURL(excelBlob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${fileName}.zip`;
+    link.download = fileName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-
   } catch (err) {
     console.error(err);
     alert('❌ Lỗi khi xuất Excel: ' + err.message);
   } finally {
-    btn.innerHTML = oldHTML;
-    btn.disabled = false;
-    if (window.lucide) lucide.createIcons();
+    if (btn) {
+      btn.innerHTML = oldHTML;
+      btn.disabled = false;
+      if (window.lucide) lucide.createIcons();
+    }
   }
 }
 
+// ─── Tải trực tiếp file PDF (.pdf) ──────────────────────────────────────
+async function downloadTaxPdfFile() {
+  const targetId = _activeTaxDeclarationId;
+  if (!targetId || !state.tax) return;
+  const declarations = state.tax.declarations || [];
+  const decl = declarations.find(d => d.id === targetId);
+  if (!decl) return;
+
+  const printArea = document.getElementById('taxPrintArea');
+  if (!printArea || !printArea.innerHTML.trim()) {
+    alert('Vui lòng xem trước tờ khai trước khi tải PDF!');
+    return;
+  }
+
+  if (typeof html2pdf === 'undefined') {
+    alert('Thư viện tạo PDF chưa tải xong. Vui lòng bấm "In" để lưu dưới dạng PDF của trình duyệt!');
+    return;
+  }
+
+  const btn = document.getElementById('exportPdfBtn');
+  const oldHTML = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.innerHTML = `<i data-lucide="loader-2" class="lucide-spin"></i> Đang tạo PDF...`;
+    btn.disabled = true;
+    if (window.lucide) lucide.createIcons();
+  }
+
+  try {
+    const fileName = `To_Khai_${decl.id}_${new Date().toISOString().slice(0, 10)}.pdf`;
+    const opt = {
+      margin: [10, 10, 10, 10],
+      filename: fileName,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    await html2pdf().set(opt).from(printArea).save();
+  } catch (err) {
+    console.error(err);
+    alert('❌ Lỗi khi xuất PDF: ' + err.message);
+  } finally {
+    if (btn) {
+      btn.innerHTML = oldHTML;
+      btn.disabled = false;
+      if (window.lucide) lucide.createIcons();
+    }
+  }
+}
+
+// ─── Tải file nén ZIP gồm cả Excel và PDF ──────────────────────────────
 async function downloadTaxZip() {
   const targetId = _activeTaxDeclarationId;
   if (!targetId || !state.tax) return;
   const declarations = state.tax.declarations || [];
   const decl = declarations.find(d => d.id === targetId);
   if (!decl) return;
-  const info = state.tax.info;
+  const info = state.tax.info || {};
 
   const btn = document.getElementById('exportZipBtn');
-  const oldHTML = btn.innerHTML;
-  btn.innerHTML = `<i data-lucide="loader-2" class="lucide-spin"></i> Đang nén...`;
-  btn.disabled = true;
+  const oldHTML = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.innerHTML = `<i data-lucide="loader-2" class="lucide-spin"></i> Đang nén...`;
+    btn.disabled = true;
+    if (window.lucide) lucide.createIcons();
+  }
 
   try {
     const printArea = document.getElementById('taxPrintArea');
-    if (!printArea) throw new Error("Không tìm thấy dữ liệu.");
+    if (!printArea) throw new Error("Không tìm thấy dữ liệu tờ khai.");
 
-    // 1. Tạo file Excel (ExcelJS) — dùng chung logic multi-sheet
     const txs = getFilteredSalesTransactions(decl.reportPeriod.from, decl.reportPeriod.to, decl.salesChannel);
-    const monthPages = buildTaxRows(decl, txs);
-
-    const fmtDate = (iso) => {
-      if (!iso) return '';
-      const p = iso.split('-');
-      return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : iso;
-    };
-
-    const dateNow = new Date();
-    const signDate = `Ngày ${dateNow.getDate()} tháng ${dateNow.getMonth() + 1} năm ${dateNow.getFullYear()}`;
-
-    const workbook = new ExcelJS.Workbook();
-
-    const setStyle = (cell, options) => {
-      cell.font = { name: 'Times New Roman', size: options.size || 12, bold: options.bold || false, italic: options.italic || false };
-      cell.alignment = { vertical: 'middle', horizontal: options.align || 'left', wrapText: true };
-    };
-    const setBrd = (cell) => {
-      cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
-    };
-
-    monthPages.forEach((page) => {
-      const sheetName = page.label || `Tháng ${page.month}`;
-      const ws = workbook.addWorksheet(sheetName);
-
-      ws.getColumn(1).width = 25;
-      ws.getColumn(2).width = 45;
-      ws.getColumn(3).width = 25;
-
-      const periodStr = page.month && page.year
-        ? `Tháng ${page.month} năm ${page.year}`
-        : `${fmtDate(decl.reportPeriod.from)} đến ${fmtDate(decl.reportPeriod.to)}`;
-
-      ws.getRow(1).getCell(1).value = `HỘ, CÁ NHÂN KINH DOANH: ${info.businessName || ''}`;
-      ws.getRow(1).getCell(3).value = `Mẫu số ${decl.id}`;
-      setStyle(ws.getRow(1).getCell(1), {bold: true, size: 12});
-      setStyle(ws.getRow(1).getCell(3), {bold: true, size: 12, align: 'center'});
-
-      ws.getRow(2).getCell(1).value = `Mã số thuế: ${info.taxCode || ''}`;
-      ws.getRow(2).getCell(3).value = `(Kèm theo Thông tư số 152/2025/TT-BTC ngày 31/12/2025 của Bộ trưởng Bộ Tài chính)`;
-      setStyle(ws.getRow(2).getCell(1), {bold: true, size: 12});
-      setStyle(ws.getRow(2).getCell(3), {size: 11, italic: true, align: 'center'});
-      ws.getRow(2).height = 35;
-
-      ws.getRow(3).getCell(1).value = `Địa chỉ: ${info.address || ''}`;
-      setStyle(ws.getRow(3).getCell(1), {bold: true, size: 12});
-
-      ws.mergeCells('A6:C6');
-      ws.getRow(6).getCell(1).value = `SỔ CHI TIẾT DOANH THU BÁN HÀNG HÓA, DỊCH VỤ`;
-      setStyle(ws.getRow(6).getCell(1), {bold: true, size: 14, align: 'center'});
-
-      ws.mergeCells('A7:C7');
-      ws.getRow(7).getCell(1).value = `Địa điểm kinh doanh: ${info.address || ''}`;
-      setStyle(ws.getRow(7).getCell(1), {size: 12, align: 'center'});
-
-      ws.mergeCells('A8:C8');
-      ws.getRow(8).getCell(1).value = `Kỳ kê khai: ${periodStr}`;
-      setStyle(ws.getRow(8).getCell(1), {size: 12, align: 'center'});
-
-      ws.mergeCells('A9:C9');
-      ws.getRow(9).getCell(1).value = `Đơn vị tính: VNĐ`;
-      setStyle(ws.getRow(9).getCell(1), {size: 12, italic: true, align: 'right'});
-
-      let r10 = ws.getRow(10);
-      r10.getCell(1).value = 'Ngày\ntháng';
-      r10.getCell(2).value = 'Giao dịch';
-      r10.getCell(3).value = 'Số tiền';
-      [1,2,3].forEach(c => { setStyle(r10.getCell(c), {bold: true, align: 'center'}); setBrd(r10.getCell(c)); });
-      r10.height = 30;
-
-      let r11 = ws.getRow(11);
-      r11.getCell(1).value = 'A';
-      r11.getCell(2).value = 'B';
-      r11.getCell(3).value = '1';
-      [1,2,3].forEach(c => { setStyle(r11.getCell(c), {bold: true, align: 'center'}); setBrd(r11.getCell(c)); });
-
-      const rows = page.rows.map(r => ({
-        date: fmtDate(r.date),
-        description: r.description,
-        amount: r.amount
-      }));
-
-      let currentRow = 12;
-      rows.forEach(r => {
-        let rData = ws.getRow(currentRow);
-        rData.getCell(1).value = r.date;
-        rData.getCell(2).value = r.description;
-        rData.getCell(3).value = r.amount;
-        setStyle(rData.getCell(1), {align: 'center'});
-        setStyle(rData.getCell(2), {align: 'left'});
-        setStyle(rData.getCell(3), {align: 'right'});
-        rData.getCell(3).numFmt = '#,##0';
-        [1,2,3].forEach(c => setBrd(rData.getCell(c)));
-        currentRow++;
-      });
-
-      const total = rows.reduce((s, r) => s + r.amount, 0);
-      let rTotal = ws.getRow(currentRow);
-      ws.mergeCells(`A${currentRow}:B${currentRow}`);
-      rTotal.getCell(1).value = 'Tổng cộng';
-      rTotal.getCell(3).value = total;
-      setStyle(rTotal.getCell(1), {bold: true, align: 'center'});
-      setStyle(rTotal.getCell(3), {bold: true, align: 'right'});
-      rTotal.getCell(3).numFmt = '#,##0';
-      setBrd(rTotal.getCell(1));
-      setBrd(rTotal.getCell(3));
-
-      let rSign = ws.getRow(currentRow + 2);
-      ws.mergeCells(`B${currentRow+2}:C${currentRow+2}`);
-      rSign.getCell(2).value = signDate;
-      setStyle(rSign.getCell(2), {italic: true, align: 'center'});
-
-      let rSign2 = ws.getRow(currentRow + 3);
-      ws.mergeCells(`B${currentRow+3}:C${currentRow+3}`);
-      rSign2.getCell(2).value = `NGƯỜI ĐẠI DIỆN HỘ KINH DOANH/\nCÁ NHÂN KINH DOANH\n(Ký, họ tên, đóng dấu)`;
-      setStyle(rSign2.getCell(2), {bold: true, align: 'center'});
-      rSign2.height = 60;
-
-      ws.pageSetup = {
-        paperSize: 9,
-        orientation: 'portrait',
-        fitToPage: true,
-        fitToWidth: 1,
-        fitToHeight: 0,
-        margins: { left: 0.7, right: 0.7, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 }
-      };
-    });
-
+    const workbook = await generateTaxExcelWorkbook(decl, txs, info);
     const excelBuffer = await workbook.xlsx.writeBuffer();
-    const excelBlob = new Blob([excelBuffer], {type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
 
-    // 2. Tạo file PDF (html2pdf)
-    const opt = {
-      margin:       10,
-      filename:     `ToKhai.pdf`,
-      image:        { type: 'jpeg', quality: 0.98 },
-      html2canvas:  { scale: 2 },
-      jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    };
-    const pdfBlob = await html2pdf().set(opt).from(printArea).output('blob');
+    let pdfBlob = null;
+    if (typeof html2pdf !== 'undefined' && printArea.innerHTML.trim()) {
+      const opt = {
+        margin: [10, 10, 10, 10],
+        filename: `To_Khai_${decl.id}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+      pdfBlob = await html2pdf().set(opt).from(printArea).output('blob');
+    }
 
-    // 3. Nén ZIP (JSZip)
     const zip = new JSZip();
-    const baseName = `ToKhai_${targetId}_${Date.now()}`;
-    zip.file(`${baseName}.xlsx`, excelBlob);
-    zip.file(`${baseName}.pdf`, pdfBlob);
+    const baseName = `To_Khai_${decl.id}_${new Date().toISOString().slice(0, 10)}`;
+    zip.file(`${baseName}.xlsx`, excelBuffer);
+    if (pdfBlob) {
+      zip.file(`${baseName}.pdf`, pdfBlob);
+    }
 
-    const zipBlob = await zip.generateAsync({type:"blob"});
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
     const url = URL.createObjectURL(zipBlob);
-    const link = document.createElement("a");
+    const link = document.createElement('a');
     link.href = url;
     link.download = `${baseName}.zip`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-
   } catch (err) {
     console.error(err);
-    alert("Đã xảy ra lỗi khi tạo file ZIP: " + err.message);
+    alert('❌ Lỗi khi tạo file ZIP: ' + err.message);
   } finally {
-    if(btn) {
-        btn.innerHTML = oldHTML;
-        btn.disabled = false;
-        if(window.lucide) lucide.createIcons();
+    if (btn) {
+      btn.innerHTML = oldHTML;
+      btn.disabled = false;
+      if (window.lucide) lucide.createIcons();
     }
   }
 }
