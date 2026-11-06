@@ -3247,13 +3247,19 @@ body {
   background: white;
   color: black;
   width: 210mm;
-  min-height: 297mm;
+  height: 297mm;
+  max-height: 297mm;
   margin: 0 auto 24px auto;
-  padding: 20mm;
+  padding: 10mm 10mm 10mm 25mm; /* Trên: 10mm, Phải: 10mm, Dưới: 10mm, Trái (gáy sách): 25mm */
   box-shadow: 0 4px 15px rgba(0,0,0,0.15);
   box-sizing: border-box;
   page-break-after: always;
   break-after: page;
+  page-break-inside: avoid;
+  break-inside: avoid;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .tax-month-page:last-child {
@@ -3265,13 +3271,13 @@ body {
 .tax-print-area .header-section {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 20px;
+  margin-bottom: 4px;
 }
 
 .tax-print-area .header-left {
   text-align: left;
-  font-size: 13px;
-  line-height: 1.4;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .tax-print-area .header-left strong {
@@ -3280,42 +3286,42 @@ body {
 
 .tax-print-area .header-right {
   text-align: center;
-  font-size: 13px;
-  line-height: 1.4;
-  max-width: 300px;
+  font-size: 11px;
+  line-height: 1.35;
+  max-width: 320px;
 }
 
 .tax-print-area .title-section {
   text-align: center;
-  margin: 30px 0 20px;
-  line-height: 1.4;
+  margin: 4px 0 2px;
+  line-height: 1.3;
 }
 
 .tax-print-area .title-section h2 {
-  font-size: 16px;
+  font-size: 13.5px;
   font-weight: bold;
-  margin: 0 0 5px 0;
+  margin: 0 0 3px 0;
   text-transform: uppercase;
   color: black;
 }
 
 .tax-print-area .title-section p {
-  font-size: 13px;
-  margin: 0;
+  font-size: 11px;
+  margin: 1px 0;
 }
 
 .tax-print-area .unit-right {
   text-align: right;
   font-style: italic;
-  font-size: 13px;
-  margin-bottom: 5px;
+  font-size: 11px;
+  margin-bottom: 2px;
 }
 
 .tax-print-area table {
   width: 100%;
   border-collapse: collapse;
-  margin-bottom: 30px;
-  font-size: 13px;
+  margin-bottom: 4px;
+  font-size: 11px;
 }
 
 .tax-print-area table, 
@@ -3326,25 +3332,29 @@ body {
 
 .tax-print-area th, 
 .tax-print-area td {
-  padding: 6px 8px;
+  padding: 1.5px 5px;
+  line-height: 1.25;
 }
 
 .tax-print-area th {
   text-align: center;
   font-weight: bold;
+  font-size: 11px;
+  background: #f8f8f8;
 }
 
 .tax-print-area td.num-col {
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .tax-print-area .footer-section {
   display: flex;
   justify-content: flex-end;
-  margin-top: 30px;
+  margin-top: 4px;
   text-align: center;
-  font-size: 13px;
-  line-height: 1.4;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .tax-print-area .footer-section .signature {
@@ -3353,7 +3363,7 @@ body {
 
 .tax-print-area .footer-section .signature strong {
   display: block;
-  margin-top: 5px;
+  margin-top: 3px;
 }
 
 @media print {
@@ -3395,12 +3405,17 @@ body {
 
   .tax-month-page {
     width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
     min-height: 0 !important;
     margin: 0 !important;
     padding: 0 !important;
     box-shadow: none !important;
     page-break-after: always !important;
     break-after: page !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    overflow: visible !important;
   }
 
   .tax-month-page:last-child {

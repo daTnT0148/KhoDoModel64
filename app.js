@@ -5827,8 +5827,8 @@ async function generateTaxExcelWorkbook(decl, txs, info) {
       orientation: 'portrait',
       fitToPage: true,
       fitToWidth: 1,
-      fitToHeight: 0,
-      margins: { left: 0.7, right: 0.7, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 }
+      fitToHeight: 1,
+      margins: { left: 0.98, right: 0.39, top: 0.39, bottom: 0.39, header: 0.2, footer: 0.2 } // left 0.98 in ≈ 25mm lề gáy sách
     };
   });
 
@@ -5910,11 +5910,12 @@ async function downloadTaxPdfFile() {
   try {
     const fileName = `To_Khai_${decl.id}_${new Date().toISOString().slice(0, 10)}.pdf`;
     const opt = {
-      margin: [10, 10, 10, 10],
+      margin: 0,
       filename: fileName,
       image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      html2canvas: { scale: 2, useCORS: true, logging: false },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'] }
     };
 
     await html2pdf().set(opt).from(printArea).save();
@@ -5958,11 +5959,12 @@ async function downloadTaxZip() {
     let pdfBlob = null;
     if (typeof html2pdf !== 'undefined' && printArea.innerHTML.trim()) {
       const opt = {
-        margin: [10, 10, 10, 10],
+        margin: 0,
         filename: `To_Khai_${decl.id}.pdf`,
         image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        html2canvas: { scale: 2, useCORS: true, logging: false },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        pagebreak: { mode: ['css', 'legacy'] }
       };
       pdfBlob = await html2pdf().set(opt).from(printArea).output('blob');
     }
