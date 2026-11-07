@@ -7054,9 +7054,63 @@ window.TrackingModule = (function() {
     return false;
   }
 
-  // --- Kiểm tra đơn đã kết thúc (giao thành công hoặc hủy/hoàn) ---
+  // --- Kiểm tra đơn ĐÃ HOÀN TRẢ THÀNH CÔNG (đã giao lại cho người gửi/kết thúc quy trình hoàn) ---
+  function isReturnCompleted(item) {
+    if (!item) return false;
+    const code = Number(item.milestoneCode);
+    if (code === 10) return true; // 10: SPX Returned to Sender
+    const status = String(item.status || '').toLowerCase().trim();
+    if (
+      status === 'return_completed' ||
+      status === 'returned_to_sender' ||
+      status === 'returned' ||
+      status === 'cancelled' ||
+      status === 'lost' ||
+      status === 'damaged'
+    ) return true;
+    const trackCode = String(item.trackingCode || '').toUpperCase().trim();
+    if (trackCode === 'F999' || trackCode === 'F680') return true;
+    const desc = String(item.description || '').toLowerCase();
+    if (
+      desc.includes('hoàn trả thành công') ||
+      desc.includes('trả về thành công') ||
+      desc.includes('chuyển hoàn thành công') ||
+      desc.includes('giao trả thành công') ||
+      desc.includes('giao lại cho người gửi thành công') ||
+      desc.includes('trả lại cho người gửi thành công') ||
+      desc.includes('đã hoàn trả') ||
+      desc.includes('đã trả về người gửi') ||
+      desc.includes('đã trả về cho người gửi') ||
+      desc.includes('hoàn tất chuyển hoàn') ||
+      desc.includes('hoàn tất trả hàng')
+    ) return true;
+    return false;
+  }
+
+  // --- Kiểm tra đơn đã kết thúc hoàn toàn (giao thành công hoặc đã hoàn trả xong) ---
   function isCompletedMilestone(item) {
-    return isDelivered(item) || isFailedOrReturned(item);
+    return isDelivered(item) || isReturnCompleted(item);
+  }
+
+  // --- Kiểm tra chuỗi ngày YYYY-MM-DD có phải hôm nay không ---
+  function isTodayDateStr(dateStr) {
+    if (!dateStr) return false;
+    try {
+      const today = new Date();
+      const y = today.getFullYear();
+      const m = String(today.getMonth() + 1).padStart(2, '0');
+      const d = String(today.getDate()).padStart(2, '0');
+      const todayYMD = `${y}-${m}-${d}`;
+      if (dateStr.length === 10 && dateStr.includes('-')) {
+        return dateStr === todayYMD;
+      }
+      const dt = new Date(dateStr);
+      const dStr = dt.toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+      const tStr = today.toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+      return dStr === tStr;
+    } catch(e) {
+      return false;
+    }
   }
 
   // --- Kiểm tra đơn giao thành công CÓ PHẢI TRONG NGÀY HÔM NAY không ---
@@ -7072,6 +7126,75 @@ window.TrackingModule = (function() {
     } catch(e) {
       return false;
     }
+  }
+
+  // --- Kiểm tra đơn hoàn trả thành công CÓ PHẢI TRONG NGÀY HÔM NAY không ---
+  function isReturnCompletedToday(item) {
+    if (!item || !item.time || !isReturnCompleted(item)) return false;
+    try {
+      const ms = Number(item.time) > 9999999999 ? Number(item.time) : Number(item.time) * 1000;
+      const d = new Date(ms);
+      if (isNaN(d.getTime())) return false;
+      const returnDateStr = d.toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+      const todayStr = new Date().toLocaleDateString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+      return returnDateStr === todayStr;
+    } catch(e) {
+      return false;
+    }
+  }
+
+  // --- Kiểm tra đơn đã được tạo phiếu hoàn hàng (return_sell) trong ứng dụng chưa ---
+  function getAppReturnInfo(tx) {
+    if (!tx) return { isReturned: false, returnDate: null, isToday: false };
+    const currentState = (typeof state !== 'undefined') ? state : window.state;
+    if (!currentState || !currentState.transactions) {
+      return { isReturned: false, returnDate: null, isToday: false };
+    }
+
+    let allTxs = [];
+    if (Array.isArray(currentState.transactions[currentState.activePortfolioId])) {
+      allTxs = currentState.transactions[currentState.activePortfolioId];
+    } else {
+      Object.keys(currentState.transactions).forEach(pid => {
+        if (Array.isArray(currentState.transactions[pid])) {
+          allTxs = allTxs.concat(currentState.transactions[pid]);
+        }
+      });
+    }
+
+    const retTxs = allTxs.filter(t => t && t.type === 'return_sell' && (t.relatedTxId === tx.id || (tx.trackingNumber && t.trackingNumber === tx.trackingNumber)));
+    if (retTxs.length === 0) {
+      return { isReturned: false, returnDate: null, isToday: false };
+    }
+
+    let latestDate = '';
+    retTxs.forEach(r => {
+      if (r.date && r.date > latestDate) latestDate = r.date;
+    });
+
+    return {
+      isReturned: true,
+      returnDate: latestDate,
+      isToday: isTodayDateStr(latestDate)
+    };
+  }
+
+  // --- Kiểm tra đơn đã hoàn hàng HÔM NAY (qua SPX hoặc qua phiếu trả hàng app) ---
+  function isReturnToday(tx, cached) {
+    const appReturn = getAppReturnInfo(tx);
+    if (appReturn.isReturned && appReturn.isToday) return true;
+    if (cached && isReturnCompleted(cached) && isReturnCompletedToday(cached)) return true;
+    return false;
+  }
+
+  // --- Kiểm tra đơn đã hoàn hàng TRƯỚC HÔM NAY (sau ngày trả lại -> xóa đi, không để treo) ---
+  function isPastReturn(tx, cached) {
+    const appReturn = getAppReturnInfo(tx);
+    // 1. Nếu trong app đã ghi nhận hoàn hàng và ngày trả đã qua trước hôm nay
+    if (appReturn.isReturned && !appReturn.isToday) return true;
+    // 2. Nếu SPX báo hoàn trả thành công và ngày hoàn đã qua trước hôm nay (và app không có phiếu hôm nay)
+    if (cached && isReturnCompleted(cached) && !isReturnCompletedToday(cached) && !appReturn.isToday) return true;
+    return false;
   }
 
   // --- Trích xuất địa điểm từ Object location của SPX ---
@@ -7143,21 +7266,49 @@ window.TrackingModule = (function() {
     // Lọc theo trạng thái: 'active' (Đang xử lý), 'completed' (Đã kết thúc), 'returned' (Hàng hoàn)
     filteredTxs = filteredTxs.filter(tx => {
       const cached = getCachedStatus(tx.trackingNumber);
-      // Chưa có dữ liệu kiểm tra -> mặc định coi là "đang xử lý"
-      if (!cached || cached.error) return _currentFilter === 'active';
-      
+      const appReturn = getAppReturnInfo(tx);
+
+      // Nếu không tìm kiếm từ khóa cụ thể mà là đơn hoàn trong quá khứ (đã xong trước hôm nay) -> ẩn đi, không để treo
+      if (!_searchQuery && isPastReturn(tx, cached)) {
+        return false;
+      }
+
+      // Chưa có dữ liệu kiểm tra từ SPX
+      if (!cached || cached.error) {
+        if (appReturn.isReturned) {
+          if (_currentFilter === 'active') return false;
+          if (_currentFilter === 'returned' || _currentFilter === 'completed') {
+            return _searchQuery ? true : appReturn.isToday;
+          }
+        }
+        return _currentFilter === 'active';
+      }
+
       const isDone = isCompletedMilestone(cached);
+      const isRet = isFailedOrReturned(cached) || appReturn.isReturned;
+
       if (_currentFilter === 'active') {
+        if (isRet) return false;
         return !isDone;
       } else if (_currentFilter === 'returned') {
         // Lọc chuyên biệt: chỉ các đơn giao không thành công / bị trả về / hoàn
-        return isFailedOrReturned(cached);
-      } else {
-        // 'completed' (Đã kết thúc): Giao thành công (hôm nay) hoặc đơn hoàn
-        if (isDelivered(cached)) {
-          return isDeliveredToday(cached);
+        if (!isRet) return false;
+        if (isReturnCompleted(cached) || appReturn.isReturned) {
+          return _searchQuery ? true : isReturnToday(tx, cached);
         }
-        return isFailedOrReturned(cached);
+        return true; // Đang chuyển hoàn dở dang -> luôn hiện để theo dõi cho tới khi giao trả xong
+      } else {
+        // 'completed' (Đã kết thúc): Giao thành công (hôm nay) hoặc đơn đã hoàn trả xong (hôm nay)
+        if (isDelivered(cached)) {
+          return _searchQuery ? true : isDeliveredToday(cached);
+        }
+        if (isRet) {
+          if (isReturnCompleted(cached) || appReturn.isReturned) {
+            return _searchQuery ? true : isReturnToday(tx, cached);
+          }
+          return false;
+        }
+        return false;
       }
     });
 
@@ -7219,6 +7370,7 @@ window.TrackingModule = (function() {
     let timeHtml = '';
     let locationHtml = '';
     let cachedNote = '';
+    const appReturn = getAppReturnInfo(tx);
 
     if (cached && !cached.error) {
       let statusClass = 'tracking-status-active';
@@ -7227,9 +7379,15 @@ window.TrackingModule = (function() {
       if (isDelivered(cached)) {
         statusClass = 'tracking-status-completed'; // Xanh lá
         defaultText = 'Giao hàng thành công';
+      } else if (appReturn.isReturned) {
+        statusClass = 'tracking-status-error'; // Đỏ
+        defaultText = 'Đã hoàn trả thành công' + (appReturn.returnDate ? ' (' + (typeof formatDate === 'function' ? formatDate(appReturn.returnDate) : appReturn.returnDate) + ')' : '');
+      } else if (isReturnCompleted(cached)) {
+        statusClass = 'tracking-status-error'; // Đỏ
+        defaultText = 'Đã hoàn trả thành công về người gửi';
       } else if (isFailedOrReturned(cached)) {
         statusClass = 'tracking-status-error'; // Đỏ
-        defaultText = 'Giao không thành công / Bị trả về';
+        defaultText = 'Đang chuyển hoàn về người gửi';
       }
 
       const statusText = cached.description || cached.status || defaultText;
@@ -7246,6 +7404,10 @@ window.TrackingModule = (function() {
         const ago = Math.round((Date.now() - cached._cachedAt) / 60000);
         cachedNote = '<span class="tracking-cached-note">Kiểm tra ' + (ago < 1 ? 'vừa xong' : ago + ' phút trước') + (cached.slsTn ? ' · Mã nội bộ: ' + cached.slsTn : '') + '</span>';
       }
+    } else if (appReturn.isReturned) {
+      const returnDateStr = appReturn.returnDate ? ' (' + (typeof formatDate === 'function' ? formatDate(appReturn.returnDate) : appReturn.returnDate) + ')' : '';
+      statusHtml = '<span class="tracking-status-badge tracking-status-error">Đã hoàn hàng' + returnDateStr + '</span>';
+      cachedNote = '<span class="tracking-cached-note">Đã tạo phiếu hoàn hàng trong kho</span>';
     } else if (cached && cached.error) {
       statusHtml = '<span class="tracking-status-badge tracking-status-error">⚠ ' + cached.error + '</span>';
       cachedNote = '<span class="tracking-cached-note tracking-error-note">Chưa kết nối được SPX · Bấm cập nhật lại</span>';
@@ -7312,6 +7474,8 @@ window.TrackingModule = (function() {
       
       // Lấy danh sách mã chưa kết thúc (hoặc chưa có cache, hoặc cache đơn đang giao đã quá hạn)
       const toRefreshTxs = allTxs.filter(tx => {
+        const appReturn = getAppReturnInfo(tx);
+        if (appReturn.isReturned) return false; // Đã tạo phiếu hoàn hàng trong kho app, không quét lại
         const cached = getCachedStatus(tx.trackingNumber);
         return !cached || cached.error || isCacheExpired(cached);
       });
@@ -7397,6 +7561,8 @@ window.TrackingModule = (function() {
     setTimeout(() => {
       const allTxs = getTrackingTransactions();
       const needRefresh = allTxs.some(tx => {
+        const appReturn = getAppReturnInfo(tx);
+        if (appReturn.isReturned) return false;
         const cached = getCachedStatus(tx.trackingNumber);
         return !cached || cached.error || isCacheExpired(cached);
       });
@@ -7411,18 +7577,38 @@ window.TrackingModule = (function() {
     const allTxs = getTrackingTransactions();
     let activeCount = 0;   // 🟡 Vàng: Đang giao / Đang xử lý
     let successToday = 0;  // 🟢 Xanh lá: Giao thành công hôm nay
-    let failedCount = 0;   // 🔴 Đỏ: Giao không thành công / Hoàn / Hủy
+    let failedCount = 0;   // 🔴 Đỏ: Đang chuyển hoàn dở dang HOẶC hoàn trả thành công hôm nay
 
     allTxs.forEach(tx => {
       const cached = getCachedStatus(tx.trackingNumber);
+
+      // Bỏ qua đơn hoàn trong quá khứ (đã hoàn thành công trước hôm nay) -> không đếm vào bất kỳ chấm nào
+      if (isPastReturn(tx, cached)) {
+        return;
+      }
+
+      const appReturn = getAppReturnInfo(tx);
+
       if (!cached || cached.error) {
-        activeCount++;
+        if (appReturn.isReturned) {
+          if (appReturn.isToday) failedCount++;
+        } else {
+          activeCount++;
+        }
       } else if (isDelivered(cached)) {
         if (isDeliveredToday(cached)) {
           successToday++;
         }
-      } else if (isFailedOrReturned(cached)) {
-        failedCount++;
+      } else if (isFailedOrReturned(cached) || appReturn.isReturned) {
+        if (isReturnCompleted(cached) || appReturn.isReturned) {
+          // Chỉ đếm nếu hoàn thành công trong hôm nay! Sau ngày hôm đó không đếm/không treo
+          if (isReturnToday(tx, cached)) {
+            failedCount++;
+          }
+        } else {
+          // Đang trên đường chuyển hoàn (chưa về tới người gửi): đếm để theo dõi
+          failedCount++;
+        }
       } else {
         activeCount++;
       }
