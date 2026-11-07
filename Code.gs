@@ -270,17 +270,47 @@ function getAllData() {
 
   const currency        = settingsMap["currency"] || "VND";
   const activePortfolio = settingsMap["activePortfolioId"] || (portfolios[0] ? portfolios[0].id : "p-default");
-  let subFees = null;
-  try {
-    if (settingsMap["subFees"]) subFees = JSON.parse(settingsMap["subFees"]);
-  } catch (e) {}
+  
+  // Từng dòng phí con đọc trực tiếp từ sheet Settings:
+  const subFees = {
+    feePayment: (settingsMap["feePayment"] !== undefined && settingsMap["feePayment"] !== "") ? parseFloat(settingsMap["feePayment"]) : 0,
+    feeFixed:   (settingsMap["feeFixed"] !== undefined && settingsMap["feeFixed"] !== "") ? parseFloat(settingsMap["feeFixed"]) : 0,
+    feeVoucher: (settingsMap["feeVoucher"] !== undefined && settingsMap["feeVoucher"] !== "") ? parseFloat(settingsMap["feeVoucher"]) : 0,
+    feeTax:     (settingsMap["feeTax"] !== undefined && settingsMap["feeTax"] !== "") ? parseFloat(settingsMap["feeTax"]) : 0,
+    feePiship:  (settingsMap["feePiship"] !== undefined && settingsMap["feePiship"] !== "") ? parseFloat(settingsMap["feePiship"]) : 0,
+    feeInfra:   (settingsMap["feeInfra"] !== undefined && settingsMap["feeInfra"] !== "") ? parseFloat(settingsMap["feeInfra"]) : 0,
+    feeManage:  (settingsMap["feeManage"] !== undefined && settingsMap["feeManage"] !== "") ? parseFloat(settingsMap["feeManage"]) : 0,
+    feePack:    (settingsMap["feePack"] !== undefined && settingsMap["feePack"] !== "") ? parseFloat(settingsMap["feePack"]) : 0,
+    feeAds:     (settingsMap["feeAds"] !== undefined && settingsMap["feeAds"] !== "") ? parseFloat(settingsMap["feeAds"]) : 0,
+    feeAff:     (settingsMap["feeAff"] !== undefined && settingsMap["feeAff"] !== "") ? parseFloat(settingsMap["feeAff"]) : 0
+  };
+
+  // Fallback nếu trước đó lưu dạng JSON
+  if (settingsMap["subFees"]) {
+    try {
+      const parsedSub = JSON.parse(settingsMap["subFees"]);
+      Object.keys(subFees).forEach(k => {
+        if (!subFees[k] && parsedSub[k]) subFees[k] = parseFloat(parsedSub[k]);
+      });
+    } catch(e) {}
+  }
 
   const feeSettings = {
     fee:          parseFloat(settingsMap["fee"] || "25"),
     extra:        parseFloat(settingsMap["extra"] || "4620"),
     operation:    parseFloat(settingsMap["operation"] || "5000"),
     targetMargin: settingsMap["targetMargin"] !== undefined ? parseFloat(settingsMap["targetMargin"]) : 10,
-    subFees:      subFees
+    subFees:      subFees,
+    feePayment:   subFees.feePayment,
+    feeFixed:     subFees.feeFixed,
+    feeVoucher:   subFees.feeVoucher,
+    feeTax:       subFees.feeTax,
+    feePiship:    subFees.feePiship,
+    feeInfra:     subFees.feeInfra,
+    feeManage:    subFees.feeManage,
+    feePack:      subFees.feePack,
+    feeAds:       subFees.feeAds,
+    feeAff:       subFees.feeAff
   };
 
   if (portfolios.length === 0) {
@@ -413,14 +443,32 @@ function saveSettings(data) {
   for (let i = 1; i < values.length; i++) {
     settingsMap[String(values[i][0])] = i + 1;
   }
+  const fs = data.feeSettings || {};
+  const sub = fs.subFees || {};
+  const getSubVal = (key) => {
+    const v = sub[key] !== undefined ? sub[key] : fs[key];
+    return (v !== undefined && v !== null && v !== "") ? String(v) : undefined;
+  };
+
   const toSave = {
     currency:          data.currency,
     activePortfolioId: data.activePortfolioId,
-    fee:               data.feeSettings ? String(data.feeSettings.fee)          : undefined,
-    extra:             data.feeSettings ? String(data.feeSettings.extra)        : undefined,
-    operation:         data.feeSettings ? String(data.feeSettings.operation)    : undefined,
-    targetMargin:      data.feeSettings ? String(data.feeSettings.targetMargin) : undefined,
-    subFees:           (data.feeSettings && data.feeSettings.subFees) ? JSON.stringify(data.feeSettings.subFees) : undefined
+    fee:               fs.fee !== undefined ? String(fs.fee) : undefined,
+    extra:             fs.extra !== undefined ? String(fs.extra) : undefined,
+    operation:         fs.operation !== undefined ? String(fs.operation) : undefined,
+    targetMargin:      fs.targetMargin !== undefined ? String(fs.targetMargin) : undefined,
+    // Lưu từng loại phí con trực tiếp thành 1 dòng trên sheet Settings:
+    feePayment:        getSubVal("feePayment"),
+    feeFixed:          getSubVal("feeFixed"),
+    feeVoucher:        getSubVal("feeVoucher"),
+    feeTax:            getSubVal("feeTax"),
+    feePiship:         getSubVal("feePiship"),
+    feeInfra:          getSubVal("feeInfra"),
+    feeManage:         getSubVal("feeManage"),
+    feePack:           getSubVal("feePack"),
+    feeAds:            getSubVal("feeAds"),
+    feeAff:            getSubVal("feeAff"),
+    subFees:           (fs.subFees) ? JSON.stringify(fs.subFees) : undefined
   };
   Object.entries(toSave).forEach(([key, value]) => {
     if (value === undefined) return;

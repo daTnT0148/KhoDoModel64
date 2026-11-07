@@ -417,15 +417,33 @@ function mergeStateFromCloud(cloudData) {
   if (!hasPendingSettings) {
     if (cloudData.currency) state.currency = cloudData.currency;
     if (cloudData.feeSettings) {
-      // Bảo tồn subFees: nếu cloud chưa có subFees thì giữ lại subFees ở local/state
-      const localSub = (state.feeSettings && state.feeSettings.subFees) || (() => {
-        try { return JSON.parse(localStorage.getItem("shopee_sub_fees") || "null"); } catch(e) { return null; }
-      })();
-      state.feeSettings = Object.assign({}, cloudData.feeSettings);
-      if (cloudData.feeSettings.subFees) {
-        state.feeSettings.subFees = cloudData.feeSettings.subFees;
-      } else if (localSub) {
-        state.feeSettings.subFees = localSub;
+      const fs = cloudData.feeSettings;
+      // Trích xuất subFees: ưu tiên từ subFees object hoặc từ các trường phẳng trả về từ Google Sheet
+      const cloudSub = fs.subFees || {
+        feePayment: fs.feePayment,
+        feeFixed:   fs.feeFixed,
+        feeVoucher: fs.feeVoucher,
+        feeTax:     fs.feeTax,
+        feePiship:  fs.feePiship,
+        feeInfra:   fs.feeInfra,
+        feeManage:  fs.feeManage,
+        feePack:    fs.feePack,
+        feeAds:     fs.feeAds,
+        feeAff:     fs.feeAff
+      };
+
+      const hasCloudSub = Object.values(cloudSub).some(v => v !== undefined && v !== null && v !== 0 && v !== '');
+
+      let finalSub = hasCloudSub ? cloudSub : null;
+      if (!finalSub) {
+        finalSub = (state.feeSettings && state.feeSettings.subFees) || (() => {
+          try { return JSON.parse(localStorage.getItem("shopee_sub_fees") || "null"); } catch(e) { return null; }
+        })();
+      }
+
+      state.feeSettings = Object.assign({}, fs, { subFees: finalSub || undefined });
+      if (finalSub) {
+        try { localStorage.setItem("shopee_sub_fees", JSON.stringify(finalSub)); } catch(e) {}
       }
     }
     if (cloudData.activePortfolioId && state.portfolios.some(p => p.id === cloudData.activePortfolioId)) {
@@ -570,10 +588,30 @@ function dbSaveSettings() {
       localStorage.setItem("shopee_sub_fees", JSON.stringify(state.feeSettings.subFees));
     }
   } catch(e) {}
+
+  const fs = state.feeSettings || {};
+  const sub = fs.subFees || {};
+
   return apiPost("saveSettings", {
     currency:          state.currency,
     activePortfolioId: state.activePortfolioId,
-    feeSettings:       state.feeSettings
+    feeSettings: {
+      fee:          fs.fee,
+      extra:        fs.extra,
+      operation:    fs.operation,
+      targetMargin: fs.targetMargin,
+      subFees:      sub,
+      feePayment:   sub.feePayment,
+      feeFixed:     sub.feeFixed,
+      feeVoucher:   sub.feeVoucher,
+      feeTax:       sub.feeTax,
+      feePiship:    sub.feePiship,
+      feeInfra:     sub.feeInfra,
+      feeManage:    sub.feeManage,
+      feePack:      sub.feePack,
+      feeAds:       sub.feeAds,
+      feeAff:       sub.feeAff
+    }
   });
 }
 
