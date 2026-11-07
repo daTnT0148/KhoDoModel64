@@ -270,11 +270,17 @@ function getAllData() {
 
   const currency        = settingsMap["currency"] || "VND";
   const activePortfolio = settingsMap["activePortfolioId"] || (portfolios[0] ? portfolios[0].id : "p-default");
+  let subFees = null;
+  try {
+    if (settingsMap["subFees"]) subFees = JSON.parse(settingsMap["subFees"]);
+  } catch (e) {}
+
   const feeSettings = {
     fee:          parseFloat(settingsMap["fee"] || "25"),
     extra:        parseFloat(settingsMap["extra"] || "4620"),
     operation:    parseFloat(settingsMap["operation"] || "5000"),
-    targetMargin: settingsMap["targetMargin"] !== undefined ? parseFloat(settingsMap["targetMargin"]) : 10
+    targetMargin: settingsMap["targetMargin"] !== undefined ? parseFloat(settingsMap["targetMargin"]) : 10,
+    subFees:      subFees
   };
 
   if (portfolios.length === 0) {
@@ -413,7 +419,8 @@ function saveSettings(data) {
     fee:               data.feeSettings ? String(data.feeSettings.fee)          : undefined,
     extra:             data.feeSettings ? String(data.feeSettings.extra)        : undefined,
     operation:         data.feeSettings ? String(data.feeSettings.operation)    : undefined,
-    targetMargin:      data.feeSettings ? String(data.feeSettings.targetMargin) : undefined
+    targetMargin:      data.feeSettings ? String(data.feeSettings.targetMargin) : undefined,
+    subFees:           (data.feeSettings && data.feeSettings.subFees) ? JSON.stringify(data.feeSettings.subFees) : undefined
   };
   Object.entries(toSave).forEach(([key, value]) => {
     if (value === undefined) return;

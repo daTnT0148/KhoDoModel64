@@ -454,6 +454,12 @@ function loadStateFromLocalStorage() {
         } else if (state.feeSettings.targetMargin === undefined) {
           state.feeSettings.targetMargin = 10;
         }
+        if (!state.feeSettings.subFees) {
+          try {
+            const rawSub = localStorage.getItem("shopee_sub_fees");
+            if (rawSub) state.feeSettings.subFees = JSON.parse(rawSub);
+          } catch(e) {}
+        }
         // Đảm bảo dữ liệu Tax hợp lệ (migrate dữ liệu cũ không có tax)
         if (!state.tax) {
           state.tax = getDefaultTaxState();
@@ -3326,10 +3332,17 @@ function setupReturnFormSubmission() {
   });
 }
 
-// Tự động điền Chi phí đơn hoàn = Phí piship + Đóng gói (từ feeSettings.subFees)
+// Tự động điền Chi phí đơn hoàn = Phí piship + Đóng gói (từ feeSettings.subFees hoặc localStorage)
 function autoFillReturnLoss() {
   const s = state.feeSettings || {};
-  const sub = s.subFees || {};
+  let sub = s.subFees || null;
+  if (!sub) {
+    try {
+      const rawSub = localStorage.getItem("shopee_sub_fees");
+      if (rawSub) sub = JSON.parse(rawSub);
+    } catch(e) {}
+  }
+  sub = sub || {};
   const piship = Number(sub.feePiship) || 0;
   const pack = Number(sub.feePack) || 0;
   const total = piship + pack;
@@ -4725,6 +4738,10 @@ function syncFeeSettings() {
   };
 
   state.feeSettings = { fee, extra, operation, targetMargin, subFees };
+  saveStateToLocalStorage();
+  try {
+    localStorage.setItem("shopee_sub_fees", JSON.stringify(subFees));
+  } catch(e) {}
   dbSaveSettings();
 
   // Cập nhật lại bảng kho để hiển thị giá hòa vốn mới
@@ -4822,27 +4839,38 @@ function initShopeeCalc() {
   fmtInput("calcExtra", s.extra);
   fmtInput("calcOperation", s.operation);
 
-  // Khôi phục giá trị phí con đã lưu
-  if (s.subFees) {
+  // Khôi phục giá trị phí con đã lưu (từ s.subFees hoặc localStorage)
+  let sub = s.subFees;
+  if (!sub) {
+    try {
+      const rawSub = localStorage.getItem("shopee_sub_fees");
+      if (rawSub) {
+        sub = JSON.parse(rawSub);
+        s.subFees = sub;
+      }
+    } catch(e) {}
+  }
+
+  if (sub) {
     const setSubNum = (id, val) => {
       const el = document.getElementById(id);
-      if (!el || !val) return;
+      if (!el || val === undefined || val === null || val === '') return;
       if (el.type === 'number') {
         el.value = val;
       } else {
         el.value = formatNumberInput(String(Math.round(val)));
       }
     };
-    setSubNum('calcFeePayment', s.subFees.feePayment);
-    setSubNum('calcFeeFixed', s.subFees.feeFixed);
-    setSubNum('calcFeeVoucher', s.subFees.feeVoucher);
-    setSubNum('calcFeeTax', s.subFees.feeTax);
-    setSubNum('calcFeePiship', s.subFees.feePiship);
-    setSubNum('calcFeeInfra', s.subFees.feeInfra);
-    setSubNum('calcFeeManage', s.subFees.feeManage);
-    setSubNum('calcFeePack', s.subFees.feePack);
-    setSubNum('calcFeeAds', s.subFees.feeAds);
-    setSubNum('calcFeeAff', s.subFees.feeAff);
+    setSubNum('calcFeePayment', sub.feePayment);
+    setSubNum('calcFeeFixed', sub.feeFixed);
+    setSubNum('calcFeeVoucher', sub.feeVoucher);
+    setSubNum('calcFeeTax', sub.feeTax);
+    setSubNum('calcFeePiship', sub.feePiship);
+    setSubNum('calcFeeInfra', sub.feeInfra);
+    setSubNum('calcFeeManage', sub.feeManage);
+    setSubNum('calcFeePack', sub.feePack);
+    setSubNum('calcFeeAds', sub.feeAds);
+    setSubNum('calcFeeAff', sub.feeAff);
   }
 
   // Nạp formatting cho calcPrice, calcCogs, calcExtra, calcOperation và các sub-fee vnd

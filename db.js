@@ -416,7 +416,18 @@ function mergeStateFromCloud(cloudData) {
   // --- Scalar settings — only adopt cloud values if nothing local is unsynced for them ---
   if (!hasPendingSettings) {
     if (cloudData.currency) state.currency = cloudData.currency;
-    if (cloudData.feeSettings) state.feeSettings = cloudData.feeSettings;
+    if (cloudData.feeSettings) {
+      // Bảo tồn subFees: nếu cloud chưa có subFees thì giữ lại subFees ở local/state
+      const localSub = (state.feeSettings && state.feeSettings.subFees) || (() => {
+        try { return JSON.parse(localStorage.getItem("shopee_sub_fees") || "null"); } catch(e) { return null; }
+      })();
+      state.feeSettings = Object.assign({}, cloudData.feeSettings);
+      if (cloudData.feeSettings.subFees) {
+        state.feeSettings.subFees = cloudData.feeSettings.subFees;
+      } else if (localSub) {
+        state.feeSettings.subFees = localSub;
+      }
+    }
     if (cloudData.activePortfolioId && state.portfolios.some(p => p.id === cloudData.activePortfolioId)) {
       state.activePortfolioId = cloudData.activePortfolioId;
     }
@@ -551,6 +562,14 @@ function dbDeletePortfolio(portfolioId) {
 }
 
 function dbSaveSettings() {
+  if (typeof saveStateToLocalStorage === "function") {
+    saveStateToLocalStorage();
+  }
+  try {
+    if (state.feeSettings && state.feeSettings.subFees) {
+      localStorage.setItem("shopee_sub_fees", JSON.stringify(state.feeSettings.subFees));
+    }
+  } catch(e) {}
   return apiPost("saveSettings", {
     currency:          state.currency,
     activePortfolioId: state.activePortfolioId,
