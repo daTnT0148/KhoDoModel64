@@ -3315,15 +3315,28 @@ function setupReturnFormSubmission() {
 
     returnForm.reset();
     document.getElementById("returnTxSelect").value = "";
-    document.getElementById("returnLoss").value = "0";
     document.getElementById("returnRestock").value = "yes";
     const infoBubble = document.getElementById("returnTxInfo");
     if (infoBubble) infoBubble.classList.add("hidden");
     window.datePickers.returnDate.setValue(dateToISO(new Date()));
+    autoFillReturnLoss(); // Tự động điền lại chi phí đơn hoàn cho lần trả hàng kế tiếp
 
     alert(`Đã ghi nhận ${returnType === "return_buy" ? "trả hàng nhập" : "trả hàng bán"} thành công cho ${qty} chiếc ${originalTx.modelName}!`);
     refreshApplicationData();
   });
+}
+
+// Tự động điền Chi phí đơn hoàn = Phí piship + Đóng gói (từ feeSettings.subFees)
+function autoFillReturnLoss() {
+  const s = state.feeSettings || {};
+  const sub = s.subFees || {};
+  const piship = Number(sub.feePiship) || 0;
+  const pack = Number(sub.feePack) || 0;
+  const total = piship + pack;
+  const el = document.getElementById("returnLoss");
+  if (el && total > 0) {
+    el.value = formatNumberInput(String(Math.round(total)));
+  }
 }
 
 // Xóa một giao dịch khỏi lịch sử
@@ -6283,6 +6296,11 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     btn.classList.add('active');
     target.classList.add('tx-form-active');
+
+    // Khi chuyển sang tab Hoàn: tự động điền chi phí đơn hoàn = Phí piship + Đóng gói
+    if (formId === 'returnForm') {
+      autoFillReturnLoss();
+    }
 
     if (window.lucide) lucide.createIcons();
   }
