@@ -5907,6 +5907,8 @@ async function downloadTaxPdfFile() {
     if (window.lucide) lucide.createIcons();
   }
 
+  printArea.classList.add('exporting-pdf');
+
   try {
     const fileName = `To_Khai_${decl.id}_${new Date().toISOString().slice(0, 10)}.pdf`;
     const opt = {
@@ -5915,7 +5917,7 @@ async function downloadTaxPdfFile() {
       image: { type: 'jpeg', quality: 0.98 },
       html2canvas: { scale: 2, useCORS: true, logging: false },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-      pagebreak: { mode: ['css', 'legacy'] }
+      pagebreak: { mode: 'css' }
     };
 
     await html2pdf().set(opt).from(printArea).save();
@@ -5923,6 +5925,7 @@ async function downloadTaxPdfFile() {
     console.error(err);
     alert('❌ Lỗi khi xuất PDF: ' + err.message);
   } finally {
+    printArea.classList.remove('exporting-pdf');
     if (btn) {
       btn.innerHTML = oldHTML;
       btn.disabled = false;
@@ -5958,15 +5961,20 @@ async function downloadTaxZip() {
 
     let pdfBlob = null;
     if (typeof html2pdf !== 'undefined' && printArea.innerHTML.trim()) {
-      const opt = {
-        margin: 0,
-        filename: `To_Khai_${decl.id}.pdf`,
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, logging: false },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        pagebreak: { mode: ['css', 'legacy'] }
-      };
-      pdfBlob = await html2pdf().set(opt).from(printArea).output('blob');
+      printArea.classList.add('exporting-pdf');
+      try {
+        const opt = {
+          margin: 0,
+          filename: `To_Khai_${decl.id}.pdf`,
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: { scale: 2, useCORS: true, logging: false },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+          pagebreak: { mode: 'css' }
+        };
+        pdfBlob = await html2pdf().set(opt).from(printArea).output('blob');
+      } finally {
+        printArea.classList.remove('exporting-pdf');
+      }
     }
 
     const zip = new JSZip();

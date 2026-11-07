@@ -3247,14 +3247,12 @@ body {
   background: white;
   color: black;
   width: 210mm;
-  height: 297mm;
-  max-height: 297mm;
+  height: 295mm;
+  max-height: 295mm;
   margin: 0 auto 24px auto;
   padding: 10mm 10mm 10mm 25mm; /* Trên: 10mm, Phải: 10mm, Dưới: 10mm, Trái (gáy sách): 25mm */
   box-shadow: 0 4px 15px rgba(0,0,0,0.15);
   box-sizing: border-box;
-  page-break-after: always;
-  break-after: page;
   page-break-inside: avoid;
   break-inside: avoid;
   overflow: hidden;
@@ -3262,10 +3260,37 @@ body {
   flex-direction: column;
 }
 
+.tax-month-page:not(:last-child) {
+  page-break-after: always;
+  break-after: page;
+}
+
 .tax-month-page:last-child {
   margin-bottom: 0;
   page-break-after: auto;
   break-after: auto;
+}
+
+/* Khi xuất PDF: loại bỏ hoàn toàn margin và shadow giữa các trang */
+.tax-print-area.exporting-pdf .tax-month-page {
+  margin: 0 !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  height: 295mm !important;
+  max-height: 295mm !important;
+  width: 210mm !important;
+  page-break-inside: avoid !important;
+  break-inside: avoid !important;
+}
+
+.tax-print-area.exporting-pdf .tax-month-page:not(:last-child) {
+  page-break-after: always !important;
+  break-after: page !important;
+}
+
+.tax-print-area.exporting-pdf .tax-month-page:last-child {
+  page-break-after: auto !important;
+  break-after: auto !important;
 }
 
 .tax-print-area .header-section {
