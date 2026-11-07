@@ -2851,6 +2851,100 @@ body {
   margin-bottom: 16px;
 }
 
+/* --- Collapsible Fee Dropdown (Shopee Profit Calculator) --- */
+.shopee-fee-group {
+  position: relative;
+}
+
+.shopee-fee-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+  transition: color 0.2s;
+}
+
+.shopee-fee-toggle:hover {
+  color: var(--primary);
+}
+
+.shopee-fee-toggle.open i {
+  transform: rotate(180deg);
+}
+
+.shopee-fee-dropdown {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  margin-top: 4px;
+  background: #1e2536;
+  border: 1px solid var(--card-border);
+  border-radius: var(--border-radius-sm);
+  padding: 10px 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  min-width: 220px;
+}
+
+.shopee-fee-dropdown.open {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shopee-sub-fee {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.shopee-sub-fee label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.shopee-sub-fee input[type="number"],
+.shopee-sub-fee input[type="text"] {
+  width: 100%;
+  background: #111827;
+  border: 1px solid var(--card-border);
+  border-radius: var(--border-radius-sm);
+  color: var(--text-white);
+  padding: 7px 10px;
+  font-family: var(--font-family);
+  font-size: 13px;
+  outline: none;
+  transition: var(--transition);
+}
+
+.shopee-sub-fee input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.shopee-sub-fee .currency-input-wrapper {
+  border: 1px solid var(--card-border);
+  border-radius: var(--border-radius-sm);
+  background: #111827;
+}
+
+.shopee-sub-fee .currency-input-wrapper input {
+  border: none;
+  padding: 7px 10px;
+}
+
+.shopee-sub-fee .currency-input-wrapper .currency-addon {
+  font-size: 11px;
+  padding: 7px 8px;
+}
+
 @media (max-width: 1024px) {
   .shopee-calc-grid {
     grid-template-columns: repeat(2, 1fr);

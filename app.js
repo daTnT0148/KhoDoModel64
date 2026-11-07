@@ -4697,12 +4697,102 @@ function syncFeeSettings() {
   const operation = getCalcNum("calcOperation");
   const targetMargin = getCalcNum("calcTargetMargin");
 
-  state.feeSettings = { fee, extra, operation, targetMargin };
+  // Lưu chi tiết phí con để khôi phục khi mở lại
+  const subFees = {
+    feePayment: getCalcSubNum("calcFeePayment"),
+    feeFixed: getCalcSubNum("calcFeeFixed"),
+    feeVoucher: getCalcSubNum("calcFeeVoucher"),
+    feeTax: getCalcSubNum("calcFeeTax"),
+    feePiship: getCalcSubNum("calcFeePiship"),
+    feeInfra: getCalcSubNum("calcFeeInfra"),
+    feeManage: getCalcSubNum("calcFeeManage"),
+    feePack: getCalcSubNum("calcFeePack"),
+    feeAds: getCalcSubNum("calcFeeAds"),
+    feeAff: getCalcSubNum("calcFeeAff")
+  };
+
+  state.feeSettings = { fee, extra, operation, targetMargin, subFees };
   dbSaveSettings();
 
   // Cập nhật lại bảng kho để hiển thị giá hòa vốn mới
   const inventory = calculateInventory(state.activePortfolioId);
   renderInventoryTable(inventory);
+}
+
+// Lấy giá trị từ ô sub-fee (hỗ trợ cả input[type=number] và input[type=text] có format dấu chấm)
+function getCalcSubNum(id) {
+  const el = document.getElementById(id);
+  if (!el) return 0;
+  if (el.type === 'number') return parseFloat(el.value) || 0;
+  return getNumericValue(el.value) || 0;
+}
+
+// Toggle mở/đóng dropdown phí con — giữ mở cho tới khi nhấn lại hoặc click ngoài
+function toggleFeeDropdown(dropdownId, toggleEl) {
+  const dd = document.getElementById(dropdownId);
+  if (!dd) return;
+  const isOpen = dd.classList.contains('open');
+
+  // Đóng tất cả dropdown khác trước
+  document.querySelectorAll('.shopee-fee-dropdown.open').forEach(d => {
+    if (d.id !== dropdownId) {
+      d.classList.remove('open');
+      const parentToggle = d.closest('.shopee-fee-group').querySelector('.shopee-fee-toggle');
+      if (parentToggle) parentToggle.classList.remove('open');
+    }
+  });
+
+  if (isOpen) {
+    dd.classList.remove('open');
+    toggleEl.classList.remove('open');
+  } else {
+    dd.classList.add('open');
+    toggleEl.classList.add('open');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+}
+
+// Đóng dropdown khi click ngoài phạm vi
+document.addEventListener('click', function(e) {
+  if (e.target.closest('.shopee-fee-group')) return;
+  document.querySelectorAll('.shopee-fee-dropdown.open').forEach(d => {
+    d.classList.remove('open');
+    const parentToggle = d.closest('.shopee-fee-group').querySelector('.shopee-fee-toggle');
+    if (parentToggle) parentToggle.classList.remove('open');
+  });
+});
+
+// Cộng tổng phí con → ghi vào ô phí tổng (Phí sàn %)
+function sumFeeSan() {
+  const total = (parseFloat(document.getElementById('calcFeePayment').value) || 0)
+              + (parseFloat(document.getElementById('calcFeeFixed').value) || 0)
+              + (parseFloat(document.getElementById('calcFeeVoucher').value) || 0)
+              + (parseFloat(document.getElementById('calcFeeTax').value) || 0);
+  const el = document.getElementById('calcFee');
+  if (el) el.value = Math.round(total * 100) / 100;
+  runShopeeCalc();
+  syncFeeSettings();
+}
+
+// Cộng tổng phí con → ghi vào ô phí tổng (Phí kèm vnd)
+function sumFeeKem() {
+  const total = getCalcSubNum('calcFeePiship') + getCalcSubNum('calcFeeInfra');
+  const el = document.getElementById('calcExtra');
+  if (el) el.value = formatNumberInput(String(Math.round(total)));
+  runShopeeCalc();
+  syncFeeSettings();
+}
+
+// Cộng tổng phí con → ghi vào ô phí tổng (Phí vận hành vnd)
+function sumFeeVanHanh() {
+  const total = getCalcSubNum('calcFeeManage')
+              + getCalcSubNum('calcFeePack')
+              + getCalcSubNum('calcFeeAds')
+              + getCalcSubNum('calcFeeAff');
+  const el = document.getElementById('calcOperation');
+  if (el) el.value = formatNumberInput(String(Math.round(total)));
+  runShopeeCalc();
+  syncFeeSettings();
 }
 
 // Khởi tạo bộ tính Shopee: nạp giá trị đã lưu vào các ô
@@ -4719,8 +4809,32 @@ function initShopeeCalc() {
   fmtInput("calcExtra", s.extra);
   fmtInput("calcOperation", s.operation);
 
-  // Nạp formatting cho calcPrice, calcCogs, calcExtra, calcOperation
-  ["calcPrice", "calcCogs", "calcExtra", "calcOperation"].forEach(id => {
+  // Khôi phục giá trị phí con đã lưu
+  if (s.subFees) {
+    const setSubNum = (id, val) => {
+      const el = document.getElementById(id);
+      if (!el || !val) return;
+      if (el.type === 'number') {
+        el.value = val;
+      } else {
+        el.value = formatNumberInput(String(Math.round(val)));
+      }
+    };
+    setSubNum('calcFeePayment', s.subFees.feePayment);
+    setSubNum('calcFeeFixed', s.subFees.feeFixed);
+    setSubNum('calcFeeVoucher', s.subFees.feeVoucher);
+    setSubNum('calcFeeTax', s.subFees.feeTax);
+    setSubNum('calcFeePiship', s.subFees.feePiship);
+    setSubNum('calcFeeInfra', s.subFees.feeInfra);
+    setSubNum('calcFeeManage', s.subFees.feeManage);
+    setSubNum('calcFeePack', s.subFees.feePack);
+    setSubNum('calcFeeAds', s.subFees.feeAds);
+    setSubNum('calcFeeAff', s.subFees.feeAff);
+  }
+
+  // Nạp formatting cho calcPrice, calcCogs, calcExtra, calcOperation và các sub-fee vnd
+  ["calcPrice", "calcCogs", "calcExtra", "calcOperation",
+   "calcFeePiship", "calcFeeInfra", "calcFeeManage", "calcFeePack", "calcFeeAds", "calcFeeAff"].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener("input", () => {

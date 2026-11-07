@@ -679,24 +679,104 @@
                   <span class="currency-addon">vnd</span>
                 </div>
               </div>
-              <div class="shopee-input-group">
-                <label>Phí sàn (%)</label>
+
+              <!-- Phí sàn (%) — collapsible dropdown with sub-fees -->
+              <div class="shopee-input-group shopee-fee-group">
+                <label class="shopee-fee-toggle" id="toggleFeeSan" onclick="toggleFeeDropdown('feeSanDropdown', this)">
+                  Phí sàn (%)
+                  <i data-lucide="chevron-down" style="width:14px;height:14px;transition:transform 0.2s;"></i>
+                </label>
                 <input type="number" id="calcFee" min="0" max="100" step="0.1" oninput="runShopeeCalc(); syncFeeSettings()">
+                <div class="shopee-fee-dropdown" id="feeSanDropdown">
+                  <div class="shopee-sub-fee">
+                    <label>Phí thanh toán (%)</label>
+                    <input type="number" id="calcFeePayment" min="0" max="100" step="0.1" placeholder="0" oninput="sumFeeSan()">
+                  </div>
+                  <div class="shopee-sub-fee">
+                    <label>Phí cố định (%)</label>
+                    <input type="number" id="calcFeeFixed" min="0" max="100" step="0.1" placeholder="0" oninput="sumFeeSan()">
+                  </div>
+                  <div class="shopee-sub-fee">
+                    <label>Voucher extra (%)</label>
+                    <input type="number" id="calcFeeVoucher" min="0" max="100" step="0.1" placeholder="0" oninput="sumFeeSan()">
+                  </div>
+                  <div class="shopee-sub-fee">
+                    <label>Thuế (%)</label>
+                    <input type="number" id="calcFeeTax" min="0" max="100" step="0.1" placeholder="0" oninput="sumFeeSan()">
+                  </div>
+                </div>
               </div>
-              <div class="shopee-input-group">
-                <label>Phí kèm (vnd)</label>
+
+              <!-- Phí kèm (vnd) — collapsible dropdown with sub-fees -->
+              <div class="shopee-input-group shopee-fee-group">
+                <label class="shopee-fee-toggle" id="toggleFeeKem" onclick="toggleFeeDropdown('feeKemDropdown', this)">
+                  Phí kèm (vnd)
+                  <i data-lucide="chevron-down" style="width:14px;height:14px;transition:transform 0.2s;"></i>
+                </label>
                 <div class="currency-input-wrapper">
                   <input type="text" id="calcExtra" placeholder="0" oninput="runShopeeCalc(); syncFeeSettings()">
                   <span class="currency-addon">vnd</span>
                 </div>
+                <div class="shopee-fee-dropdown" id="feeKemDropdown">
+                  <div class="shopee-sub-fee">
+                    <label>Phí piship (vnd)</label>
+                    <div class="currency-input-wrapper">
+                      <input type="text" id="calcFeePiship" placeholder="0" oninput="sumFeeKem()">
+                      <span class="currency-addon">vnd</span>
+                    </div>
+                  </div>
+                  <div class="shopee-sub-fee">
+                    <label>Phí hạ tầng (vnd)</label>
+                    <div class="currency-input-wrapper">
+                      <input type="text" id="calcFeeInfra" placeholder="0" oninput="sumFeeKem()">
+                      <span class="currency-addon">vnd</span>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div class="shopee-input-group">
-                <label>Phí vận hành (vnd)</label>
+
+              <!-- Phí vận hành (vnd) — collapsible dropdown with sub-fees -->
+              <div class="shopee-input-group shopee-fee-group">
+                <label class="shopee-fee-toggle" id="toggleFeeVanHanh" onclick="toggleFeeDropdown('feeVanHanhDropdown', this)">
+                  Phí vận hành (vnd)
+                  <i data-lucide="chevron-down" style="width:14px;height:14px;transition:transform 0.2s;"></i>
+                </label>
                 <div class="currency-input-wrapper">
                   <input type="text" id="calcOperation" placeholder="0" oninput="runShopeeCalc(); syncFeeSettings()">
                   <span class="currency-addon">vnd</span>
                 </div>
+                <div class="shopee-fee-dropdown" id="feeVanHanhDropdown">
+                  <div class="shopee-sub-fee">
+                    <label>Phí quản lý (vnd)</label>
+                    <div class="currency-input-wrapper">
+                      <input type="text" id="calcFeeManage" placeholder="0" oninput="sumFeeVanHanh()">
+                      <span class="currency-addon">vnd</span>
+                    </div>
+                  </div>
+                  <div class="shopee-sub-fee">
+                    <label>Đóng gói (vnd)</label>
+                    <div class="currency-input-wrapper">
+                      <input type="text" id="calcFeePack" placeholder="0" oninput="sumFeeVanHanh()">
+                      <span class="currency-addon">vnd</span>
+                    </div>
+                  </div>
+                  <div class="shopee-sub-fee">
+                    <label>Quảng cáo (vnd)</label>
+                    <div class="currency-input-wrapper">
+                      <input type="text" id="calcFeeAds" placeholder="0" oninput="sumFeeVanHanh()">
+                      <span class="currency-addon">vnd</span>
+                    </div>
+                  </div>
+                  <div class="shopee-sub-fee">
+                    <label>Aff (vnd)</label>
+                    <div class="currency-input-wrapper">
+                      <input type="text" id="calcFeeAff" placeholder="0" oninput="sumFeeVanHanh()">
+                      <span class="currency-addon">vnd</span>
+                    </div>
+                  </div>
+                </div>
               </div>
+
               <div class="shopee-input-group">
                 <label>Biên lợi nhuận mong muốn (%)</label>
                 <input type="number" id="calcTargetMargin" min="0" max="100" step="1" oninput="runShopeeCalc(); syncFeeSettings()">
@@ -1015,7 +1095,7 @@
                     <input type="number" id="returnQty" min="1" value="1" required>
                   </div>
                   <div class="form-group">
-                    <label for="returnLoss">Khoản lỗ kèm theo (ship, bao bì...)</label>
+                    <label for="returnLoss">Chi phí đơn hoàn</label>
                     <div class="currency-input-wrapper">
                       <input type="text" id="returnLoss" placeholder="0" value="0">
                       <span class="currency-addon" id="returnLossCurrencyAddon">vnd</span>
@@ -1549,7 +1629,7 @@
           <div class="info-bubble" id="editTxReturnInfo"></div>
         </div>
         <div class="form-group hidden" id="editTxReturnLossGroup">
-          <label for="editTxReturnLoss">Khoản lỗ kèm theo (ship, bao bì...)</label>
+          <label for="editTxReturnLoss">Chi phí đơn hoàn</label>
           <div class="currency-input-wrapper">
             <input type="text" id="editTxReturnLoss" placeholder="0">
             <span class="currency-addon" id="editTxReturnLossCurrencyAddon">vnd</span>
