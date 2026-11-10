@@ -5522,9 +5522,12 @@ function buildPeriodicTaxRows(txs, reportPeriod) {
     for (let d = dayStart; d <= dayEnd; d++) {
       const isoDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       const amount = txsByDate[isoDate] || 0;
+      let desc = '';
+      if (amount > 0) desc = 'Doanh thu bán hàng';
+      else if (amount < 0) desc = 'Giảm trừ doanh thu hàng hoàn trả';
       monthRows.push({
         date: isoDate,
-        description: amount !== 0 ? 'Doanh thu bán hàng' : '',
+        description: desc,
         amount: amount
       });
     }
@@ -5560,7 +5563,7 @@ function buildEachTransactionTaxRows(txs, reportPeriod) {
       return {
         date: tx.date,
         description: isReturn
-          ? `Hoàn trả ${qty} xe ${tx.modelName} - ${tx.brand}, giảm doanh thu`
+          ? `Giảm trừ doanh thu: Hoàn trả ${qty} xe ${tx.modelName} - ${tx.brand}`
           : `${qty} xe ${tx.modelName} - ${tx.brand}`,
         amount: price * qty * (isReturn ? -1 : 1)
       };
@@ -5594,7 +5597,7 @@ function buildEachTransactionTaxRows(txs, reportPeriod) {
           monthRows.push({
             date: isoDate,
             description: isReturn
-              ? `Hoàn trả ${qty} xe ${tx.modelName} - ${tx.brand}, giảm doanh thu`
+              ? `Giảm trừ doanh thu: Hoàn trả ${qty} xe ${tx.modelName} - ${tx.brand}`
               : `${qty} xe ${tx.modelName} - ${tx.brand}`,
             amount: price * qty * (isReturn ? -1 : 1)
           });
