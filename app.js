@@ -5480,24 +5480,33 @@ function getTaxRowUnitPrice(tx) {
   return parseFloat(String(finalPriceSource || '0').replace(/[^0-9.-]+/g, '')) || 0;
 }
 
-// Option 1 — Theo định kỳ: gộp tất cả giao dịch cùng ngày thành 1 dòng "Doanh thu bán hàng", tách theo tháng, liệt kê đủ ngày
+// Option 1 — Theo định kỳ: gom theo ngày (tách rõ dòng Doanh thu bán hàng và dòng Giảm trừ hàng hoàn nếu có)
 function buildPeriodicTaxRows(txs, reportPeriod) {
-  // Gộp doanh thu theo ngày
+  // Gom giao dịch theo ngày, tách tiền bán dương và tiền hoàn âm
   const txsByDate = {};
   txs.forEach(tx => {
     const price = getTaxRowUnitPrice(tx);
     const qty = Number(tx.qty) || 1;
-    const amt = price * qty * (tx.type === 'return_sell' ? -1 : 1);
-    if (!txsByDate[tx.date]) txsByDate[tx.date] = 0;
-    txsByDate[tx.date] += amt;
+    const isReturn = tx.type === 'return_sell';
+    const amt = price * qty;
+    if (!txsByDate[tx.date]) txsByDate[tx.date] = { sales: 0, returns: 0, returnCount: 0 };
+    if (isReturn) {
+      txsByDate[tx.date].returns += amt;
+      txsByDate[tx.date].returnCount += qty;
+    } else {
+      txsByDate[tx.date].sales += amt;
+    }
   });
 
   // Xác định khoảng thời gian kỳ báo cáo
   if (!reportPeriod || !reportPeriod.from || !reportPeriod.to) {
-    // Fallback: chỉ trả về các ngày có dữ liệu
-    return [{ month: null, rows: Object.keys(txsByDate).sort().map(date => ({
-      date, description: 'Doanh thu bán hàng', amount: txsByDate[date]
-    })) }];
+    const fallbackRows = [];
+    Object.keys(txsByDate).sort().forEach(date => {
+      const d = txsByDate[date];
+      if (d.sales > 0) fallbackRows.push({ date, description: 'Doanh thu bán hàng', amount: d.sales });
+      if (d.returns > 0) fallbackRows.push({ date, description: `Giảm trừ doanh thu hàng hoàn trả (${d.returnCount} xe)`, amount: -d.returns });
+    });
+    return [{ month: null, rows: fallbackRows }];
   }
 
   const startDate = new Date(reportPeriod.from + 'T00:00:00');
@@ -5521,15 +5530,33 @@ function buildPeriodicTaxRows(txs, reportPeriod) {
 
     for (let d = dayStart; d <= dayEnd; d++) {
       const isoDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      const amount = txsByDate[isoDate] || 0;
-      let desc = '';
-      if (amount > 0) desc = 'Doanh thu bán hàng';
-      else if (amount < 0) desc = 'Giảm trừ doanh thu hàng hoàn trả';
-      monthRows.push({
-        date: isoDate,
-        description: desc,
-        amount: amount
-      });
+      const dayData = txsByDate[isoDate];
+
+      if (!dayData || (dayData.sales === 0 && dayData.returns === 0)) {
+        // Ngày không có giao dịch
+        monthRows.push({
+          date: isoDate,
+          description: '',
+          amount: 0
+        });
+      } else {
+        // Có bán hàng trong ngày -> ghi dòng Doanh thu bán hàng
+        if (dayData.sales > 0) {
+          monthRows.push({
+            date: isoDate,
+            description: 'Doanh thu bán hàng',
+            amount: dayData.sales
+          });
+        }
+        // Có đơn hoàn trong ngày -> tách riêng dòng rõ ràng với chú thích giảm trừ!
+        if (dayData.returns > 0) {
+          monthRows.push({
+            date: isoDate,
+            description: `Giảm trừ doanh thu hàng hoàn trả (${dayData.returnCount} xe)`,
+            amount: -dayData.returns
+          });
+        }
+      }
     }
 
     monthPages.push({
