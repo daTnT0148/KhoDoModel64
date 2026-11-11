@@ -272,6 +272,12 @@
             </a>
           </li>
           <li>
+            <a href="#" class="nav-link" data-tab="affiliate">
+              <i data-lucide="share-2"></i>
+              <span>Affiliate</span>
+            </a>
+          </li>
+          <li>
             <a href="#" class="nav-link" data-tab="reports">
               <i data-lucide="calendar"></i>
               <span>Báo cáo năm</span>
@@ -1232,6 +1238,187 @@
         <div id="trackingRefreshResult" class="hidden" style="padding:12px 16px; border-radius:var(--border-radius-sm); margin-top:12px;"></div>
       </section>
 
+      <!-- ═══════════════════════════════════════════════════════════════════ -->
+      <!-- TAB: AFFILIATE MARKETING (TIẾP THỊ LIÊN KẾT)                        -->
+      <!-- ═══════════════════════════════════════════════════════════════════ -->
+      <section class="panel" id="panel-affiliate">
+        <div class="dashboard-header" style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+          <div>
+            <h2><i data-lucide="share-2"></i> Affiliate Marketing</h2>
+            <p>Quản lý hoa hồng tiếp thị liên kết từ TikTok Shop và Shopee.</p>
+          </div>
+          <div class="affiliate-header-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="btn btn-primary btn-sm" id="affiliateManualBtn">
+              <i data-lucide="plus-circle"></i> Nhập hoa hồng thủ công
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" id="affiliateHistoryBtn">
+              <i data-lucide="history"></i> Lịch sử file Excel
+            </button>
+          </div>
+        </div>
+
+        <!-- Sub-tabs: TikTok Affiliate / Shopee Affiliate -->
+        <div class="affiliate-platform-tabs">
+          <button type="button" class="affiliate-tab-btn active" data-aff-tab="tiktok">
+            <i data-lucide="video"></i> TikTok Affiliate
+            <span class="badge" id="badgeCountTikTok" style="margin-left:6px; font-size:11px;">0</span>
+          </button>
+          <button type="button" class="affiliate-tab-btn" data-aff-tab="shopee">
+            <i data-lucide="shopping-bag"></i> Shopee Affiliate
+            <span class="badge" id="badgeCountShopee" style="margin-left:6px; font-size:11px;">0</span>
+          </button>
+        </div>
+
+        <!-- KPI Summary Cards -->
+        <div class="affiliate-kpi-grid">
+          <div class="affiliate-kpi-card">
+            <div class="kpi-label">Tổng hoa hồng</div>
+            <div class="kpi-value text-primary" id="kpiAffTotalCommission">0 ₫</div>
+            <div class="kpi-hint" id="kpiAffTotalHint">Thực tế phát sinh</div>
+          </div>
+          <div class="affiliate-kpi-card">
+            <div class="kpi-label">Hoa hồng đã quyết toán</div>
+            <div class="kpi-value text-success" id="kpiAffSettledCommission">0 ₫</div>
+            <div class="kpi-hint">Đã chốt quyết toán</div>
+          </div>
+          <div class="affiliate-kpi-card">
+            <div class="kpi-label">Tổng tiền có thể rút</div>
+            <div class="kpi-value text-warning" id="kpiAffWithdrawable">0 ₫</div>
+            <div class="kpi-hint">Chờ thanh toán / Khả dụng</div>
+          </div>
+          <div class="affiliate-kpi-card">
+            <div class="kpi-label">Tổng tiền đã nhận</div>
+            <div class="kpi-value text-info" id="kpiAffPaid">0 ₫</div>
+            <div class="kpi-hint">Đã thanh toán về tài khoản</div>
+          </div>
+        </div>
+
+        <!-- VIEW: TIKTOK AFFILIATE -->
+        <div class="affiliate-view" id="affiliateViewTikTok">
+          <!-- Dropzone nhập file XLSX -->
+          <div class="affiliate-dropzone" id="tiktokDropzone">
+            <i data-lucide="file-spreadsheet" class="dropzone-icon"></i>
+            <div class="dropzone-title">Kéo thả file báo cáo <strong>.xlsx</strong> TikTok Affiliate vào đây</div>
+            <div class="dropzone-subtitle">Hoặc bấm nút bên dưới để chọn file từ máy tính / điện thoại</div>
+            <input type="file" id="tiktokFileInput" accept=".xlsx" style="display:none">
+            <button type="button" class="btn btn-outline-primary btn-sm" id="tiktokSelectFileBtn" style="margin-top:12px;">
+              <i data-lucide="upload"></i> Chọn file XLSX từ máy
+            </button>
+            <div id="tiktokUploadProgress" class="upload-progress-container hidden" style="margin-top:14px; width:100%; max-width:400px;">
+              <div class="progress-bar-bg"><div class="progress-bar-fill" id="tiktokProgressBar"></div></div>
+              <p class="progress-text text-muted" id="tiktokProgressText" style="font-size:12px; margin-top:6px;">Đang xử lý...</p>
+            </div>
+          </div>
+
+          <!-- Bộ lọc danh sách đơn TikTok -->
+          <div class="affiliate-filter-bar">
+            <div class="filter-controls" style="display:flex; gap:8px; flex-wrap:wrap; flex:1;">
+              <select id="tiktokFilterStatus" class="styled-select">
+                <option value="all">Tất cả trạng thái</option>
+                <option value="settled">Đã quyết toán</option>
+                <option value="pending">Chờ quyết toán</option>
+                <option value="withdrawable">Có thể rút</option>
+                <option value="paid">Đã thanh toán</option>
+              </select>
+              <select id="tiktokFilterSource" class="styled-select">
+                <option value="all">Tất cả nguồn</option>
+                <option value="excel">Từ file Excel</option>
+                <option value="manual">Nhập thủ công</option>
+              </select>
+              <input type="text" id="tiktokSearchInput" class="styled-input" placeholder="Tìm kiếm theo mã đơn, SKU, tên sản phẩm..." style="min-width:220px; flex:1;">
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" id="tiktokRefreshBtn" title="Tải lại dữ liệu">
+              <i data-lucide="rotate-cw"></i>
+            </button>
+          </div>
+
+          <!-- Bảng danh sách đơn TikTok -->
+          <div class="affiliate-table-container">
+            <table class="affiliate-table" id="tiktokOrdersTable">
+              <thead>
+                <tr>
+                  <th>Ngày đặt</th>
+                  <th>Ngày Q.Toán</th>
+                  <th>Mã đơn hàng</th>
+                  <th>Tên sản phẩm</th>
+                  <th style="text-align:right;">SL</th>
+                  <th style="text-align:right;">GMV</th>
+                  <th style="text-align:right;">Hoa hồng TT</th>
+                  <th style="text-align:right;">Thực nhận</th>
+                  <th style="text-align:center;">Trạng thái</th>
+                  <th style="text-align:center;">Nguồn</th>
+                  <th style="text-align:center;">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="tiktokOrdersTableBody">
+                <!-- Rendered dynamically -->
+              </tbody>
+            </table>
+            <div id="tiktokEmptyState" class="affiliate-empty-state hidden">
+              <i data-lucide="package-search" style="width:40px; height:40px; color:var(--text-muted); margin-bottom:12px;"></i>
+              <p>Chưa có dữ liệu TikTok Affiliate nào. Hãy tải lên file XLSX hoặc bấm "Nhập hoa hồng thủ công".</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW: SHOPEE AFFILIATE -->
+        <div class="affiliate-view hidden" id="affiliateViewShopee">
+          <!-- Shopee Quick Banner & Info -->
+          <div class="affiliate-shopee-banner">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <i data-lucide="info" style="color:var(--primary); width:28px; height:28px; flex-shrink:0;"></i>
+              <div>
+                <strong>Shopee Affiliate:</strong> Nhập hoa hồng phát sinh từ các chiến dịch tiếp thị liên kết Shopee.
+                Dữ liệu được tổng hợp cùng TikTok vào tờ khai thuế S1a-HKD (Giao dịch B).
+              </div>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" id="shopeeAddManualBtn">
+              <i data-lucide="plus"></i> Thêm giao dịch Shopee
+            </button>
+          </div>
+
+          <!-- Bộ lọc danh sách Shopee -->
+          <div class="affiliate-filter-bar" style="margin-top:16px;">
+            <div class="filter-controls" style="display:flex; gap:8px; flex-wrap:wrap; flex:1;">
+              <select id="shopeeFilterStatus" class="styled-select">
+                <option value="all">Tất cả trạng thái</option>
+                <option value="settled">Đã quyết toán</option>
+                <option value="pending">Chờ quyết toán</option>
+                <option value="paid">Đã thanh toán</option>
+              </select>
+              <input type="text" id="shopeeSearchInput" class="styled-input" placeholder="Tìm theo mã đơn, sản phẩm, ghi chú..." style="min-width:220px; flex:1;">
+            </div>
+          </div>
+
+          <!-- Bảng danh sách Shopee -->
+          <div class="affiliate-table-container">
+            <table class="affiliate-table" id="shopeeOrdersTable">
+              <thead>
+                <tr>
+                  <th>Ngày phát sinh</th>
+                  <th>Ngày Q.Toán</th>
+                  <th>Mã đơn / GD</th>
+                  <th>Sản phẩm / Nội dung</th>
+                  <th style="text-align:right;">Hoa hồng gốc</th>
+                  <th style="text-align:right;">Thuế khấu trừ</th>
+                  <th style="text-align:right;">Thực nhận</th>
+                  <th style="text-align:center;">Trạng thái</th>
+                  <th style="text-align:center;">Nguồn</th>
+                  <th style="text-align:center;">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="shopeeOrdersTableBody">
+                <!-- Rendered dynamically -->
+              </tbody>
+            </table>
+            <div id="shopeeEmptyState" class="affiliate-empty-state hidden">
+              <i data-lucide="shopping-bag" style="width:40px; height:40px; color:var(--text-muted); margin-bottom:12px;"></i>
+              <p>Chưa có giao dịch Shopee Affiliate nào. Bấm "Thêm giao dịch Shopee" để bắt đầu.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
         <!-- ================= PANEL 4: REPORTS ================= -->
         <section class="panel" id="panel-reports">
           <h2 class="sr-only">Báo cáo năm</h2>
@@ -1773,6 +1960,138 @@
 
         <!-- Nút bán nhanh -->
         <div class="car-detail-footer" id="carDetailFooter"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- MODAL: NHẬP HOA HỒNG AFFILIATE THỦ CÔNG                             -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <div class="modal hidden" id="affiliateManualModal" role="dialog" aria-modal="true">
+    <div class="modal-overlay" onclick="closeAffiliateManualModal()"></div>
+    <div class="modal-card form-card" style="max-width:560px; width:95%; max-height:90vh; overflow-y:auto;">
+      <div class="form-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <h3 id="affManualModalTitle"><i data-lucide="edit-3"></i> Nhập hoa hồng Affiliate thủ công</h3>
+        <button type="button" class="close-btn" onclick="closeAffiliateManualModal()" title="Đóng">&times;</button>
+      </div>
+      <form id="affiliateManualForm" class="styled-form" style="margin-top:16px;">
+        <input type="hidden" id="affManualId">
+        <div class="form-group">
+          <label for="affManualPlatform">Nền tảng tiếp thị <span class="required">*</span></label>
+          <select id="affManualPlatform" class="styled-select" required>
+            <option value="tiktok">TikTok Affiliate</option>
+            <option value="shopee">Shopee Affiliate</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="affManualOrderDate">Ngày phát sinh hoa hồng <span class="required">*</span></label>
+            <div class="datepicker-wrapper" id="affManualOrderDateWrapper">
+              <input type="text" id="affManualOrderDate" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10" required>
+              <i data-lucide="calendar" class="datepicker-icon"></i>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="affManualSettlementDate">Ngày quyết toán <span class="text-muted">(nếu có)</span></label>
+            <div class="datepicker-wrapper" id="affManualSettlementDateWrapper">
+              <input type="text" id="affManualSettlementDate" inputmode="numeric" class="datepicker-input" placeholder="dd/mm/yyyy" maxlength="10">
+              <i data-lucide="calendar" class="datepicker-icon"></i>
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="affManualProductName">Tên sản phẩm / Nội dung tiếp thị <span class="text-muted">(không bắt buộc)</span></label>
+          <input type="text" id="affManualProductName" placeholder="Ví dụ: Xe mô hình R34 GT-R / Video unbox...">
+        </div>
+        <div class="form-group">
+          <label for="affManualOrderId">Mã đơn hàng / Giao dịch <span class="text-muted">(không bắt buộc)</span></label>
+          <input type="text" id="affManualOrderId" placeholder="Mã đơn hàng hoặc mã giao dịch...">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="affManualGrossCommission">Hoa hồng gốc (VND) <span class="required">*</span></label>
+            <input type="text" id="affManualGrossCommission" placeholder="0" required inputmode="numeric">
+          </div>
+          <div class="form-group">
+            <label for="affManualWithheldTax">Thuế đã khấu trừ (VND)</label>
+            <input type="text" id="affManualWithheldTax" placeholder="0" inputmode="numeric">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="affManualNetCommission">Tiền thực nhận (VND) <span class="required">*</span></label>
+            <input type="text" id="affManualNetCommission" placeholder="0" required inputmode="numeric">
+          </div>
+          <div class="form-group">
+            <label for="affManualStatus">Trạng thái <span class="required">*</span></label>
+            <select id="affManualStatus" class="styled-select" required>
+              <option value="Chờ quyết toán">Chờ quyết toán</option>
+              <option value="Đã quyết toán" selected>Đã quyết toán</option>
+              <option value="Có thể rút">Có thể rút</option>
+              <option value="Đã thanh toán">Đã thanh toán</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="affManualNotes">Ghi chú</label>
+          <textarea id="affManualNotes" rows="2" placeholder="Ghi chú thêm về đợt hoa hồng này..."></textarea>
+        </div>
+        <div style="display:flex; gap:10px; margin-top:20px;">
+          <button type="submit" class="btn btn-primary" style="flex:1;">
+            <i data-lucide="check"></i> Lưu giao dịch
+          </button>
+          <button type="button" class="btn btn-secondary" onclick="closeAffiliateManualModal()">Hủy</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- MODAL: LỊCH SỬ FILE EXCEL ĐÃ NHẬP                                   -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <div class="modal hidden" id="affiliateHistoryModal" role="dialog" aria-modal="true">
+    <div class="modal-overlay" onclick="closeAffiliateHistoryModal()"></div>
+    <div class="modal-card" style="max-width:700px; width:95%; max-height:85vh; overflow-y:auto;">
+      <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <h3><i data-lucide="history"></i> Lịch sử file Excel đã tải lên</h3>
+        <button type="button" class="close-btn" onclick="closeAffiliateHistoryModal()" title="Đóng">&times;</button>
+      </div>
+      <div style="margin-top:16px;">
+        <table class="affiliate-table" id="affiliateHistoryTable">
+          <thead>
+            <tr>
+              <th>Ngày tải lên</th>
+              <th>Tên file</th>
+              <th style="text-align:right;">Tổng dòng</th>
+              <th style="text-align:right;">Mới</th>
+              <th style="text-align:right;">Cập nhật</th>
+              <th style="text-align:center;">File Drive</th>
+              <th style="text-align:center;">Trạng thái</th>
+            </tr>
+          </thead>
+          <tbody id="affiliateHistoryTableBody">
+            <!-- Rendered dynamically -->
+          </tbody>
+        </table>
+        <div id="affiliateHistoryEmpty" class="affiliate-empty-state hidden">
+          <p>Chưa có file Excel nào được tải lên.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <!-- MODAL: CHI TIẾT ĐƠN HÀNG AFFILIATE                                  -->
+  <!-- ═══════════════════════════════════════════════════════════════════ -->
+  <div class="modal hidden" id="affiliateDetailModal" role="dialog" aria-modal="true">
+    <div class="modal-overlay" onclick="closeAffiliateDetailModal()"></div>
+    <div class="modal-card" style="max-width:620px; width:95%; max-height:90vh; overflow-y:auto;">
+      <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <h3><i data-lucide="file-text"></i> Chi tiết đơn hàng Affiliate</h3>
+        <button type="button" class="close-btn" onclick="closeAffiliateDetailModal()" title="Đóng">&times;</button>
+      </div>
+      <div id="affiliateDetailBody" style="margin-top:16px;">
+        <!-- Rendered dynamically -->
       </div>
     </div>
   </div>

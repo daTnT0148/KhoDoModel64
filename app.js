@@ -60,6 +60,12 @@ let state = {
         available: true
       }
     ]
+  },
+  // --- MODULE AFFILIATE MARKETING ---
+  affiliate: {
+    tiktok: [],
+    shopee: [],
+    uploads: []
   }
 };
 window.state = state;
@@ -579,6 +585,15 @@ function loadStateFromLocalStorage() {
             // Loại bỏ S3a-HKD nếu người dùng đã lưu phiên bản cũ có S3a
             state.tax.declarations = state.tax.declarations.filter(d => d.id !== 'S3a-HKD');
           }
+        }
+
+        // Đảm bảo module Affiliate tồn tại
+        if (!state.affiliate) {
+          state.affiliate = { tiktok: [], shopee: [], uploads: [] };
+        } else {
+          if (!state.affiliate.tiktok) state.affiliate.tiktok = [];
+          if (!state.affiliate.shopee) state.affiliate.shopee = [];
+          if (!state.affiliate.uploads) state.affiliate.uploads = [];
         }
 
         // Loại bỏ mọi giao dịch đã nằm trong Bia mộ (Tombstone) khỏi cache LocalStorage
@@ -2322,6 +2337,11 @@ function setupTabNavigation() {
       // Render tracking panel khi chuyển sang tab Theo dõi vận đơn
       if (targetTab === "tracking" && typeof window.TrackingModule !== "undefined") {
         window.TrackingModule.render();
+      }
+
+      // Render affiliate panel khi chuyển sang tab Affiliate
+      if (targetTab === "affiliate" && typeof window.renderAffiliateModule === "function") {
+        window.renderAffiliateModule();
       }
 
       // Cập nhật lại biểu đồ khi chuyển tab để tránh lỗi hiển thị kích thước
@@ -5592,7 +5612,67 @@ function getTaxRowUnitPrice(tx) {
   return parseFloat(String(finalPriceSource || '0').replace(/[^0-9.-]+/g, '')) || 0;
 }
 
-// Option 1 — Theo định kỳ: gom theo ngày (tách rõ dòng Doanh thu bán hàng và dòng Giảm trừ hàng hoàn nếu có)
+// --- Lấy dữ liệu doanh thu tiếp thị liên kết (Affiliate) thuộc kỳ báo cáo ---
+function getAffiliateTaxTransactions(reportPeriod) {
+  const currentState = (typeof state !== 'undefined') ? state : window.state;
+  if (!currentState || !currentState.affiliate) return [];
+  
+  const from = reportPeriod && reportPeriod.from ? reportPeriod.from : '';
+  const to   = reportPeriod && reportPeriod.to   ? reportPeriod.to   : '';
+
+  const results = [];
+  const seenOrderIds = new Set(); // Chống cộng trùng giữa Excel và thủ công
+
+  // 1. TikTok Affiliate
+  const tiktokList = currentState.affiliate.tiktok || [];
+  tiktokList.forEach(item => {
+    const recDate = item.settlementDate || item.orderDate || '';
+    if (!recDate) return;
+    if (from && to && (recDate < from || recDate > to)) return;
+
+    const netAmt = Number(item.totalNetCommission !== undefined && item.totalNetCommission !== null
+      ? item.totalNetCommission
+      : (item.netCommission || 0));
+    if (netAmt <= 0) return;
+
+    if (item.orderId) seenOrderIds.add(String(item.orderId));
+
+    results.push({
+      date: recDate,
+      orderId: item.orderId || '',
+      productName: item.productName || '',
+      platform: 'TikTok',
+      amount: netAmt,
+      source: item.source || 'excel'
+    });
+  });
+
+  // 2. Shopee Affiliate
+  const shopeeList = currentState.affiliate.shopee || [];
+  shopeeList.forEach(item => {
+    const recDate = item.settlementDate || item.orderDate || '';
+    if (!recDate) return;
+    if (from && to && (recDate < from || recDate > to)) return;
+
+    if (item.orderId && seenOrderIds.has(String(item.orderId))) return;
+
+    const netAmt = Number(item.netCommission || item.grossCommission || 0);
+    if (netAmt <= 0) return;
+
+    results.push({
+      date: recDate,
+      orderId: item.orderId || '',
+      productName: item.productName || '',
+      platform: 'Shopee',
+      amount: netAmt,
+      source: 'manual'
+    });
+  });
+
+  return results.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+}
+
+// Option 1 — Theo định kỳ: gom theo ngày (tách rõ dòng Doanh thu bán hàng, Doanh thu tiếp thị liên kết và dòng Giảm trừ hàng hoàn nếu có)
 function buildPeriodicTaxRows(txs, reportPeriod) {
   // Gom giao dịch theo ngày, tách tiền bán dương và tiền hoàn âm
   const txsByDate = {};
@@ -5610,13 +5690,23 @@ function buildPeriodicTaxRows(txs, reportPeriod) {
     }
   });
 
+  // Gom doanh thu Affiliate theo ngày
+  const affTxs = getAffiliateTaxTransactions(reportPeriod);
+  const affByDate = {};
+  affTxs.forEach(a => {
+    affByDate[a.date] = (affByDate[a.date] || 0) + a.amount;
+  });
+
   // Xác định khoảng thời gian kỳ báo cáo
   if (!reportPeriod || !reportPeriod.from || !reportPeriod.to) {
     const fallbackRows = [];
-    Object.keys(txsByDate).sort().forEach(date => {
+    const allDates = Array.from(new Set([...Object.keys(txsByDate), ...Object.keys(affByDate)])).sort();
+    allDates.forEach(date => {
       const d = txsByDate[date];
-      if (d.sales > 0) fallbackRows.push({ date, description: 'Doanh thu bán hàng', amount: d.sales });
-      if (d.returns > 0) fallbackRows.push({ date, description: `Giảm trừ doanh thu hàng hoàn trả (${d.returnCount} xe)`, amount: -d.returns });
+      const affAmt = affByDate[date] || 0;
+      if (d && d.sales > 0) fallbackRows.push({ date, description: 'Doanh thu bán hàng', amount: d.sales });
+      if (affAmt > 0) fallbackRows.push({ date, description: 'Doanh thu bán hàng tiếp thị liên kết', amount: affAmt });
+      if (d && d.returns > 0) fallbackRows.push({ date, description: `Giảm trừ doanh thu hàng hoàn trả (${d.returnCount} xe)`, amount: -d.returns });
     });
     return [{ month: null, rows: fallbackRows }];
   }
@@ -5643,8 +5733,13 @@ function buildPeriodicTaxRows(txs, reportPeriod) {
     for (let d = dayStart; d <= dayEnd; d++) {
       const isoDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       const dayData = txsByDate[isoDate];
+      const affAmt = affByDate[isoDate] || 0;
 
-      if (!dayData || (dayData.sales === 0 && dayData.returns === 0)) {
+      const hasSales = dayData && dayData.sales > 0;
+      const hasReturns = dayData && dayData.returns > 0;
+      const hasAff = affAmt > 0;
+
+      if (!hasSales && !hasReturns && !hasAff) {
         // Ngày không có giao dịch
         monthRows.push({
           date: isoDate,
@@ -5653,15 +5748,23 @@ function buildPeriodicTaxRows(txs, reportPeriod) {
         });
       } else {
         // Có bán hàng trong ngày -> ghi dòng Doanh thu bán hàng
-        if (dayData.sales > 0) {
+        if (hasSales) {
           monthRows.push({
             date: isoDate,
             description: 'Doanh thu bán hàng',
             amount: dayData.sales
           });
         }
+        // Có doanh thu tiếp thị liên kết trong ngày -> ghi dòng riêng theo quy định
+        if (hasAff) {
+          monthRows.push({
+            date: isoDate,
+            description: 'Doanh thu bán hàng tiếp thị liên kết',
+            amount: affAmt
+          });
+        }
         // Có đơn hoàn trong ngày -> tách riêng dòng rõ ràng với chú thích giảm trừ!
-        if (dayData.returns > 0) {
+        if (hasReturns) {
           monthRows.push({
             date: isoDate,
             description: `Giảm trừ doanh thu hàng hoàn trả (${dayData.returnCount} xe)`,
@@ -5694,8 +5797,16 @@ function buildEachTransactionTaxRows(txs, reportPeriod) {
     txsByDate[tx.date].push(tx);
   });
 
+  // Gom giao dịch Affiliate theo ngày
+  const affTxs = getAffiliateTaxTransactions(reportPeriod);
+  const affByDate = {};
+  affTxs.forEach(a => {
+    if (!affByDate[a.date]) affByDate[a.date] = [];
+    affByDate[a.date].push(a);
+  });
+
   if (!reportPeriod || !reportPeriod.from || !reportPeriod.to) {
-    return [{ month: null, rows: txs.map(tx => {
+    const rawRows = txs.map(tx => {
       const price = getTaxRowUnitPrice(tx);
       const qty = Number(tx.qty) || 1;
       const isReturn = tx.type === 'return_sell';
@@ -5706,7 +5817,15 @@ function buildEachTransactionTaxRows(txs, reportPeriod) {
           : `${qty} xe ${tx.modelName} - ${tx.brand}`,
         amount: price * qty * (isReturn ? -1 : 1)
       };
-    }) }];
+    });
+    affTxs.forEach(a => {
+      rawRows.push({
+        date: a.date,
+        description: `Doanh thu bán hàng tiếp thị liên kết - ${a.platform}` + (a.orderId ? ` (ĐH: ${a.orderId})` : ''),
+        amount: a.amount
+      });
+    });
+    return [{ month: null, rows: rawRows.sort((a, b) => a.date.localeCompare(b.date)) }];
   }
 
   const startDate = new Date(reportPeriod.from + 'T00:00:00');
@@ -5727,8 +5846,9 @@ function buildEachTransactionTaxRows(txs, reportPeriod) {
     for (let d = dayStart; d <= dayEnd; d++) {
       const isoDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       const dayTxs = txsByDate[isoDate] || [];
+      const dayAffs = affByDate[isoDate] || [];
 
-      if (dayTxs.length > 0) {
+      if (dayTxs.length > 0 || dayAffs.length > 0) {
         dayTxs.forEach(tx => {
           const price = getTaxRowUnitPrice(tx);
           const qty = Number(tx.qty) || 1;
@@ -5739,6 +5859,14 @@ function buildEachTransactionTaxRows(txs, reportPeriod) {
               ? `Giảm trừ doanh thu: Hoàn trả ${qty} xe ${tx.modelName} - ${tx.brand}`
               : `${qty} xe ${tx.modelName} - ${tx.brand}`,
             amount: price * qty * (isReturn ? -1 : 1)
+          });
+        });
+
+        dayAffs.forEach(a => {
+          monthRows.push({
+            date: isoDate,
+            description: `Doanh thu bán hàng tiếp thị liên kết - ${a.platform}` + (a.orderId ? ` (ĐH: ${a.orderId})` : ''),
+            amount: a.amount
           });
         });
       } else {
@@ -8028,6 +8156,9 @@ if (document.readyState === 'loading') {
       window.TrackingModule.init();
       window.TrackingModule.autoCheckOnStartup();
     }
+    if (window.AffiliateModule) {
+      window.AffiliateModule.init();
+    }
   });
 } else {
   setTimeout(function() {
@@ -8035,6 +8166,1058 @@ if (document.readyState === 'loading') {
       window.TrackingModule.init();
       window.TrackingModule.autoCheckOnStartup();
     }
+    if (window.AffiliateModule) {
+      window.AffiliateModule.init();
+    }
   }, 0);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AFFILIATE MARKETING MODULE (TIẾP THỊ LIÊN KẾT TIKTOK & SHOPEE)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+window.AffiliateModule = (function() {
+  let _currentTab = 'tiktok'; // 'tiktok' | 'shopee'
+  let _editingItem = null;
+
+  function init() {
+    initEvents();
+  }
+
+  function initEvents() {
+    // 1. Tab switching (TikTok vs Shopee)
+    const tabBtns = document.querySelectorAll('.affiliate-tab-btn');
+    tabBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        tabBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        _currentTab = btn.getAttribute('data-aff-tab') || 'tiktok';
+
+        const viewTikTok = document.getElementById('affiliateViewTikTok');
+        const viewShopee = document.getElementById('affiliateViewShopee');
+        if (_currentTab === 'tiktok') {
+          if (viewTikTok) viewTikTok.classList.remove('hidden');
+          if (viewShopee) viewShopee.classList.add('hidden');
+        } else {
+          if (viewTikTok) viewTikTok.classList.add('hidden');
+          if (viewShopee) viewShopee.classList.remove('hidden');
+        }
+        renderModule();
+      });
+    });
+
+    // 2. Nút mở modal nhập thủ công & lịch sử
+    const manualBtn = document.getElementById('affiliateManualBtn');
+    if (manualBtn) {
+      manualBtn.addEventListener('click', () => openManualModal(_currentTab));
+    }
+    const shopeeAddBtn = document.getElementById('shopeeAddManualBtn');
+    if (shopeeAddBtn) {
+      shopeeAddBtn.addEventListener('click', () => openManualModal('shopee'));
+    }
+    const historyBtn = document.getElementById('affiliateHistoryBtn');
+    if (historyBtn) {
+      historyBtn.addEventListener('click', openHistoryModal);
+    }
+
+    // 3. Dropzone & File Input cho TikTok
+    const dropzone = document.getElementById('tiktokDropzone');
+    const fileInput = document.getElementById('tiktokFileInput');
+    const selectFileBtn = document.getElementById('tiktokSelectFileBtn');
+
+    if (selectFileBtn && fileInput) {
+      selectFileBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        fileInput.click();
+      });
+    }
+
+    if (dropzone && fileInput) {
+      dropzone.addEventListener('click', () => fileInput.click());
+
+      dropzone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropzone.classList.add('dragover');
+      });
+
+      dropzone.addEventListener('dragleave', () => {
+        dropzone.classList.remove('dragover');
+      });
+
+      dropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropzone.classList.remove('dragover');
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+          handleFile(e.dataTransfer.files[0]);
+        }
+      });
+
+      fileInput.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+          handleFile(e.target.files[0]);
+        }
+      });
+    }
+
+    // 4. Filters & Search
+    ['tiktokFilterStatus', 'tiktokFilterSource', 'tiktokSearchInput'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('input', renderTikTokTable);
+        el.addEventListener('change', renderTikTokTable);
+      }
+    });
+
+    ['shopeeFilterStatus', 'shopeeSearchInput'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('input', renderShopeeTable);
+        el.addEventListener('change', renderShopeeTable);
+      }
+    });
+
+    const refreshBtn = document.getElementById('tiktokRefreshBtn');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', () => {
+        renderModule();
+      });
+    }
+
+    // 5. Form nhập thủ công tính toán tự động
+    const grossEl = document.getElementById('affManualGrossCommission');
+    const taxEl = document.getElementById('affManualWithheldTax');
+    const netEl = document.getElementById('affManualNetCommission');
+
+    const updateNetCalc = () => {
+      const gross = parseCurrencyNumber(grossEl ? grossEl.value : '0');
+      const tax = parseCurrencyNumber(taxEl ? taxEl.value : '0');
+      if (netEl && !netEl.dataset.manuallyEdited) {
+        const net = Math.max(0, gross - tax);
+        netEl.value = net.toLocaleString('vi-VN');
+      }
+    };
+
+    if (grossEl) {
+      grossEl.addEventListener('input', function() {
+        this.value = formatNumberInput(this.value);
+        updateNetCalc();
+      });
+    }
+    if (taxEl) {
+      taxEl.addEventListener('input', function() {
+        this.value = formatNumberInput(this.value);
+        updateNetCalc();
+      });
+    }
+    if (netEl) {
+      netEl.addEventListener('input', function() {
+        this.dataset.manuallyEdited = '1';
+        this.value = formatNumberInput(this.value);
+      });
+    }
+
+    // Submit form thủ công
+    const manualForm = document.getElementById('affiliateManualForm');
+    if (manualForm) {
+      manualForm.addEventListener('submit', handleManualFormSubmit);
+    }
+  }
+
+  // Tiện ích format số
+  function parseCurrencyNumber(str) {
+    if (typeof str === 'number') return str;
+    const clean = String(str || '').replace(/[^0-9.-]/g, '');
+    const num = parseFloat(clean);
+    return isNaN(num) ? 0 : Math.round(num);
+  }
+
+  // --- Header mapping cho TikTok XLSX ---
+  function mapTikTokHeaders(headers) {
+    const map = {};
+    headers.forEach((h, idx) => {
+      if (!h) return;
+      const clean = String(h).trim().toLowerCase();
+
+      if (clean.includes('id đơn hàng') || clean.includes('mã đơn hàng') || clean === 'order id' || clean === 'order_id') {
+        map.orderId = idx;
+      } else if (clean.includes('id sku') || clean.includes('sku id') || clean === 'sku_id') {
+        map.skuId = idx;
+      } else if (clean.includes('id sản phẩm') || clean.includes('mã sản phẩm') || clean === 'product id') {
+        map.productId = idx;
+      } else if (clean.includes('tên sản phẩm') || clean === 'product name') {
+        map.productName = idx;
+      } else if (clean === 'giá' || clean === 'đơn giá' || clean === 'price' || clean.includes('giá sản phẩm')) {
+        map.unitPrice = idx;
+      } else if (clean.includes('bán ra') || clean.includes('số món bán') || clean.includes('items sold')) {
+        map.soldQty = idx;
+      } else if (clean.includes('hoàn tiền') || clean.includes('refunded')) {
+        map.refundQty = idx;
+      } else if (clean.includes('tên cửa hàng') || clean.includes('tên shop') || clean === 'shop name') {
+        map.shopName = idx;
+      } else if (clean.includes('loại đơn hàng') || clean === 'order type') {
+        map.orderType = idx;
+      } else if (clean.includes('trạng thái quyết toán') || clean.includes('settlement status')) {
+        map.settlementStatus = idx;
+      } else if (clean.includes('loại nội dung') || clean === 'content type') {
+        map.contentType = idx;
+      } else if (clean.includes('id nội dung') || clean === 'content id') {
+        map.contentId = idx;
+      } else if (clean.includes('ngày đặt') || clean.includes('thời gian đặt') || clean === 'order time' || clean === 'order date') {
+        map.orderDate = idx;
+      } else if (clean.includes('ngày quyết toán') || clean.includes('thời gian quyết toán') || clean.includes('settlement time') || clean.includes('settlement date')) {
+        map.settlementDate = idx;
+      } else if (clean === 'gmv' || clean.includes('tổng gmv')) {
+        map.gmv = idx;
+      } else if (clean.includes('cơ sở hoa hồng thực tế') || clean.includes('actual commission base')) {
+        map.actualCommissionBase = idx;
+      } else if ((clean.includes('hoa hồng tiêu chuẩn') || clean.includes('standard commission')) && !clean.includes('ước tính') && !clean.includes('estimated')) {
+        map.standardCommission = idx;
+      } else if (clean.includes('quảng cáo cửa hàng') && !clean.includes('ước tính')) {
+        map.shopAdsCommission = idx;
+      } else if ((clean === 'thưởng' || clean.includes('tiền thưởng')) && !clean.includes('đối tác') && !clean.includes('ước tính')) {
+        map.bonus = idx;
+      } else if (clean.includes('đối tác liên kết') || clean.includes('partner bonus')) {
+        map.partnerBonus = idx;
+      } else if (clean.includes('isr')) {
+        map.taxISR = idx;
+      } else if (clean.includes('iva')) {
+        map.taxIVA = idx;
+      } else if (clean.includes('pit')) {
+        map.taxPIT = idx;
+      } else if (clean.includes('tổng số tiền nhận được cuối cùng') || clean.includes('số tiền nhận được cuối cùng') || clean.includes('thực nhận') || clean.includes('final commission')) {
+        map.totalNetCommission = idx;
+      }
+    });
+    return map;
+  }
+
+  function normalizeDateVal(val) {
+    if (!val) return '';
+    if (val instanceof Date) {
+      if (isNaN(val.getTime())) return '';
+      return val.toISOString().slice(0, 10);
+    }
+    if (typeof val === 'number') {
+      const utcDays = Math.floor(val - 25569);
+      const date = new Date(utcDays * 86400 * 1000);
+      return isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
+    }
+    const s = String(val).trim();
+    const m1 = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (m1) return `${m1[1]}-${m1[2].padStart(2, '0')}-${m1[3].padStart(2, '0')}`;
+    const m2 = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+    if (m2) return `${m2[3]}-${m2[2].padStart(2, '0')}-${m2[1].padStart(2, '0')}`;
+    return s.slice(0, 10);
+  }
+
+  // --- Xử lý tải và phân tích file TikTok XLSX ---
+  async function handleFile(file) {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.xlsx')) {
+      alert('⚠️ Vui lòng chọn file định dạng .xlsx của TikTok Shop Affiliate.');
+      return;
+    }
+
+    const progressDiv = document.getElementById('tiktokUploadProgress');
+    const progressBar = document.getElementById('tiktokProgressBar');
+    const progressText = document.getElementById('tiktokProgressText');
+
+    const updateProgress = (pct, text) => {
+      if (progressDiv) progressDiv.classList.remove('hidden');
+      if (progressBar) progressBar.style.width = pct + '%';
+      if (progressText) progressText.innerText = text;
+    };
+
+    try {
+      updateProgress(20, 'Đang đọc nội dung file Excel...');
+
+      // Đọc file thành ArrayBuffer và Base64 đồng thời
+      const arrayBuffer = await file.arrayBuffer();
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      updateProgress(45, 'Đang phân tích cấu trúc cột TikTok Affiliate...');
+
+      if (typeof ExcelJS === 'undefined') {
+        throw new Error('Thư viện ExcelJS chưa được tải.');
+      }
+
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(arrayBuffer);
+
+      // Tìm sheet chứa dữ liệu (ưu tiên "Sheet1" hoặc sheet đầu tiên)
+      let sheet = workbook.getWorksheet('Sheet1') || workbook.worksheets[0];
+      if (!sheet || sheet.rowCount < 2) {
+        throw new Error('File không có dữ liệu hoặc không tìm thấy sheet hợp lệ.');
+      }
+
+      // Đọc dòng tiêu đề (quét 5 dòng đầu tìm dòng có tiêu đề 'đơn hàng' hoặc 'sku')
+      let headerRowIndex = 1;
+      let rawHeaders = [];
+      for (let r = 1; r <= Math.min(5, sheet.rowCount); r++) {
+        const rowVals = [];
+        sheet.getRow(r).eachCell({ includeEmpty: true }, (cell, colNumber) => {
+          rowVals[colNumber] = cell.value ? String(cell.value).trim() : '';
+        });
+        const joined = rowVals.join(' ').toLowerCase();
+        if (joined.includes('đơn hàng') || joined.includes('sku') || joined.includes('hoa hồng') || joined.includes('order')) {
+          headerRowIndex = r;
+          rawHeaders = rowVals;
+          break;
+        }
+      }
+
+      if (rawHeaders.length === 0) {
+        sheet.getRow(1).eachCell({ includeEmpty: true }, (cell, colNumber) => {
+          rawHeaders[colNumber] = cell.value ? String(cell.value).trim() : '';
+        });
+      }
+
+      const colMap = mapTikTokHeaders(rawHeaders);
+      if (!colMap.orderId && !colMap.productName) {
+        throw new Error('Không nhận diện được các cột bắt buộc của TikTok Affiliate (Mã đơn hàng, Tên sản phẩm, Hoa hồng...).');
+      }
+
+      updateProgress(65, 'Đang trích xuất đơn hàng và đối soát trùng lặp...');
+
+      const parsedRows = [];
+      for (let r = headerRowIndex + 1; r <= sheet.rowCount; r++) {
+        const row = sheet.getRow(r);
+        const getVal = (colIdx) => {
+          if (!colIdx) return null;
+          const cell = row.getCell(colIdx);
+          return cell ? cell.value : null;
+        };
+
+        const orderId = String(getVal(colMap.orderId) || '').trim();
+        const productName = String(getVal(colMap.productName) || '').trim();
+        if (!orderId && !productName) continue; // Bỏ qua dòng trống
+
+        const skuId = String(getVal(colMap.skuId) || '').trim();
+        const productId = String(getVal(colMap.productId) || '').trim();
+
+        // Thu thập các trường quan trọng (ưu tiên số liệu thực tế)
+        const item = {
+          orderId: orderId,
+          skuId: skuId,
+          productId: productId,
+          productName: productName,
+          unitPrice: parseCurrencyNumber(getVal(colMap.unitPrice)),
+          soldQty: Number(getVal(colMap.soldQty) || 1),
+          refundQty: Number(getVal(colMap.refundQty) || 0),
+          shopName: String(getVal(colMap.shopName) || '').trim(),
+          orderType: String(getVal(colMap.orderType) || '').trim(),
+          settlementStatus: String(getVal(colMap.settlementStatus) || 'Chờ quyết toán').trim(),
+          contentType: String(getVal(colMap.contentType) || '').trim(),
+          contentId: String(getVal(colMap.contentId) || '').trim(),
+          orderDate: normalizeDateVal(getVal(colMap.orderDate)),
+          settlementDate: normalizeDateVal(getVal(colMap.settlementDate)),
+          gmv: parseCurrencyNumber(getVal(colMap.gmv)),
+          actualCommissionBase: parseCurrencyNumber(getVal(colMap.actualCommissionBase)),
+          standardCommission: parseCurrencyNumber(getVal(colMap.standardCommission)),
+          shopAdsCommission: parseCurrencyNumber(getVal(colMap.shopAdsCommission)),
+          bonus: parseCurrencyNumber(getVal(colMap.bonus)),
+          partnerBonus: parseCurrencyNumber(getVal(colMap.partnerBonus)),
+          taxISR: parseCurrencyNumber(getVal(colMap.taxISR)),
+          taxIVA: parseCurrencyNumber(getVal(colMap.taxIVA)),
+          taxPIT: parseCurrencyNumber(getVal(colMap.taxPIT)),
+          totalNetCommission: parseCurrencyNumber(getVal(colMap.totalNetCommission)),
+          sourceFileName: file.name,
+          source: 'excel',
+          importDate: new Date().toISOString().slice(0, 10),
+          updatedAt: Date.now()
+        };
+
+        // Nếu totalNetCommission = 0 nhưng có standardCommission, fallback
+        if (item.totalNetCommission === 0 && (item.standardCommission > 0 || item.actualCommissionBase > 0)) {
+          const totalEarned = (item.standardCommission || 0) + (item.shopAdsCommission || 0) + (item.bonus || 0) + (item.partnerBonus || 0);
+          const totalTax = (item.taxISR || 0) + (item.taxIVA || 0) + (item.taxPIT || 0);
+          item.totalNetCommission = Math.max(0, totalEarned - totalTax);
+        }
+
+        parsedRows.push(item);
+      }
+
+      if (parsedRows.length === 0) {
+        throw new Error('Không tìm thấy dòng dữ liệu đơn hàng nào trong file.');
+      }
+
+      // --- Chống trùng và cập nhật vào state ---
+      if (!state.affiliate) state.affiliate = { tiktok: [], shopee: [], uploads: [] };
+      if (!state.affiliate.tiktok) state.affiliate.tiktok = [];
+
+      let newRows = 0;
+      let updatedRows = 0;
+      let unchangedRows = 0;
+
+      // Index dữ liệu cũ theo orderId + "_" + (skuId || productId || '0')
+      const existingMap = new Map();
+      state.affiliate.tiktok.forEach((item, idx) => {
+        const key = item.orderId + '_' + (item.skuId || item.productId || '0');
+        existingMap.set(key, idx);
+      });
+
+      parsedRows.forEach(row => {
+        const key = row.orderId + '_' + (row.skuId || row.productId || '0');
+        if (existingMap.has(key)) {
+          const oldIdx = existingMap.get(key);
+          const oldItem = state.affiliate.tiktok[oldIdx];
+
+          // So sánh xem có thay đổi trạng thái, ngày quyết toán, hoặc hoa hồng không
+          const isChanged = (
+            oldItem.settlementStatus !== row.settlementStatus ||
+            oldItem.settlementDate !== row.settlementDate ||
+            oldItem.totalNetCommission !== row.totalNetCommission ||
+            oldItem.refundQty !== row.refundQty
+          );
+
+          if (isChanged) {
+            // Cập nhật bản ghi cũ, giữ lại các thông tin riêng hoặc ghi chú cũ
+            state.affiliate.tiktok[oldIdx] = Object.assign({}, oldItem, row, {
+              notes: oldItem.notes || row.notes || '',
+              updatedAt: Date.now()
+            });
+            updatedRows++;
+          } else {
+            unchangedRows++;
+          }
+        } else {
+          // Tạo bản ghi mới
+          row.id = 'tt-' + key;
+          state.affiliate.tiktok.push(row);
+          existingMap.set(key, state.affiliate.tiktok.length - 1);
+          newRows++;
+        }
+      });
+
+      // Lưu trạng thái LocalStorage ngay lập tức
+      saveStateToLocalStorage();
+
+      updateProgress(85, 'Đang lưu file gốc lên Google Drive (DuLieu_App/Affiliate/TikTok/)...');
+
+      // Tải file gốc lên Google Drive
+      let driveResult = null;
+      if (typeof dbUploadAffiliateFile === 'function') {
+        driveResult = await dbUploadAffiliateFile(
+          file.name,
+          base64,
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          new Date().getFullYear()
+        );
+      }
+
+      // Lưu nhật ký tải file
+      const uploadLog = {
+        uploadId: 'up-' + Date.now(),
+        fileName: file.name,
+        driveFileId: driveResult && driveResult.fileId ? driveResult.fileId : '',
+        driveFileUrl: driveResult && driveResult.fileUrl ? driveResult.fileUrl : '',
+        uploadDate: new Date().toLocaleString('vi-VN'),
+        totalRows: parsedRows.length,
+        newRows: newRows,
+        updatedRows: updatedRows,
+        status: 'Thành công'
+      };
+
+      if (!state.affiliate.uploads) state.affiliate.uploads = [];
+      state.affiliate.uploads.unshift(uploadLog);
+      saveStateToLocalStorage();
+
+      if (typeof dbSaveAffiliateUploadLog === 'function') {
+        dbSaveAffiliateUploadLog(uploadLog);
+      }
+
+      updateProgress(95, 'Đang đồng bộ dữ liệu vào Google Sheets (sheet Affiliate_TikTok)...');
+
+      // Ghi lô vào Google Sheets
+      if (typeof dbSaveAffiliateBatch === 'function') {
+        await dbSaveAffiliateBatch('tiktok', state.affiliate.tiktok);
+      }
+
+      updateProgress(100, 'Hoàn thành!');
+      setTimeout(() => {
+        if (progressDiv) progressDiv.classList.add('hidden');
+      }, 1500);
+
+      renderModule();
+
+      alert(
+        `✅ ĐÃ NHẬP BÁO CÁO TIKTOK AFFILIATE THÀNH CÔNG!\n\n` +
+        `• Tên file: ${file.name}\n` +
+        `• Tổng số đơn: ${parsedRows.length}\n` +
+        `• Đơn thêm mới: ${newRows}\n` +
+        `• Đơn cập nhật: ${updatedRows}\n` +
+        `• Đơn không đổi: ${unchangedRows}\n` +
+        (driveResult && driveResult.fileId ? `• File gốc: Đã lưu lên Google Drive an toàn.` : '')
+      );
+
+    } catch (err) {
+      console.error('[Affiliate Import Error]:', err);
+      if (progressDiv) progressDiv.classList.add('hidden');
+      alert('❌ Lỗi khi đọc file Excel TikTok Affiliate: ' + err.message);
+    } finally {
+      const fileInput = document.getElementById('tiktokFileInput');
+      if (fileInput) fileInput.value = '';
+    }
+  }
+
+  // --- Modal Nhập thủ công ---
+  function openManualModal(platform, item = null) {
+    _editingItem = item;
+    const modal = document.getElementById('affiliateManualModal');
+    const titleEl = document.getElementById('affManualModalTitle');
+    const platformEl = document.getElementById('affManualPlatform');
+    const idEl = document.getElementById('affManualId');
+    const orderDateEl = document.getElementById('affManualOrderDate');
+    const settlementDateEl = document.getElementById('affManualSettlementDate');
+    const productNameEl = document.getElementById('affManualProductName');
+    const orderIdEl = document.getElementById('affManualOrderId');
+    const grossEl = document.getElementById('affManualGrossCommission');
+    const taxEl = document.getElementById('affManualWithheldTax');
+    const netEl = document.getElementById('affManualNetCommission');
+    const statusEl = document.getElementById('affManualStatus');
+    const notesEl = document.getElementById('affManualNotes');
+
+    if (!modal) return;
+
+    // Init datepickers nếu chưa có
+    if (!window.affManualDatePickers) {
+      window.affManualDatePickers = {
+        orderDate: initDatePicker('affManualOrderDateWrapper'),
+        settlementDate: initDatePicker('affManualSettlementDateWrapper')
+      };
+    }
+
+    if (item) {
+      if (titleEl) titleEl.innerHTML = `<i data-lucide="edit-3"></i> Sửa hoa hồng Affiliate (${item.platform === 'shopee' ? 'Shopee' : 'TikTok'})`;
+      if (idEl) idEl.value = item.id || '';
+      if (platformEl) platformEl.value = item.platform || platform || 'tiktok';
+      if (productNameEl) productNameEl.value = item.productName || '';
+      if (orderIdEl) orderIdEl.value = item.orderId || '';
+      if (grossEl) grossEl.value = Number(item.grossCommission || item.actualCommissionBase || item.totalNetCommission || 0).toLocaleString('vi-VN');
+      if (taxEl) taxEl.value = Number(item.withheldTax || item.taxPIT || 0).toLocaleString('vi-VN');
+      if (netEl) {
+        netEl.value = Number(item.netCommission || item.totalNetCommission || 0).toLocaleString('vi-VN');
+        delete netEl.dataset.manuallyEdited;
+      }
+      if (statusEl) statusEl.value = item.status || item.settlementStatus || 'Đã quyết toán';
+      if (notesEl) notesEl.value = item.notes || '';
+
+      window.affManualDatePickers.orderDate.setValue(item.orderDate || '');
+      window.affManualDatePickers.settlementDate.setValue(item.settlementDate || '');
+    } else {
+      if (titleEl) titleEl.innerHTML = `<i data-lucide="plus-circle"></i> Nhập hoa hồng Affiliate thủ công`;
+      if (idEl) idEl.value = '';
+      if (platformEl) platformEl.value = platform || 'tiktok';
+      if (productNameEl) productNameEl.value = '';
+      if (orderIdEl) orderIdEl.value = '';
+      if (grossEl) grossEl.value = '';
+      if (taxEl) taxEl.value = '0';
+      if (netEl) {
+        netEl.value = '';
+        delete netEl.dataset.manuallyEdited;
+      }
+      if (statusEl) statusEl.value = 'Đã quyết toán';
+      if (notesEl) notesEl.value = '';
+
+      const todayStr = new Date().toISOString().slice(0, 10);
+      window.affManualDatePickers.orderDate.setValue(todayStr);
+      window.affManualDatePickers.settlementDate.setValue(todayStr);
+    }
+
+    modal.classList.remove('hidden');
+    if (window.lucide) lucide.createIcons();
+  }
+
+  function closeManualModal() {
+    const modal = document.getElementById('affiliateManualModal');
+    if (modal) modal.classList.add('hidden');
+    _editingItem = null;
+  }
+
+  async function handleManualFormSubmit(e) {
+    e.preventDefault();
+    const platform = document.getElementById('affManualPlatform').value; // 'tiktok' | 'shopee'
+    const id = document.getElementById('affManualId').value;
+    const orderDate = window.affManualDatePickers ? window.affManualDatePickers.orderDate.getValue() : '';
+    const settlementDate = window.affManualDatePickers ? window.affManualDatePickers.settlementDate.getValue() : '';
+    const productName = document.getElementById('affManualProductName').value.trim();
+    const orderId = document.getElementById('affManualOrderId').value.trim();
+    const grossCommission = parseCurrencyNumber(document.getElementById('affManualGrossCommission').value);
+    const withheldTax = parseCurrencyNumber(document.getElementById('affManualWithheldTax').value);
+    const netCommission = parseCurrencyNumber(document.getElementById('affManualNetCommission').value);
+    const status = document.getElementById('affManualStatus').value;
+    const notes = document.getElementById('affManualNotes').value.trim();
+
+    if (!orderDate) {
+      alert('Vui lòng chọn ngày phát sinh hoa hồng.');
+      return;
+    }
+    if (grossCommission <= 0 && netCommission <= 0) {
+      alert('Vui lòng nhập số tiền hoa hồng hợp lệ.');
+      return;
+    }
+
+    if (!state.affiliate) state.affiliate = { tiktok: [], shopee: [], uploads: [] };
+    if (!state.affiliate[platform]) state.affiliate[platform] = [];
+
+    const isEdit = Boolean(id);
+    const now = Date.now();
+
+    const record = {
+      id: isEdit ? id : ('aff-' + platform + '-' + now),
+      platform: platform,
+      orderDate: orderDate,
+      settlementDate: settlementDate || orderDate,
+      productName: productName,
+      orderId: orderId,
+      grossCommission: grossCommission,
+      withheldTax: withheldTax,
+      netCommission: netCommission,
+      totalNetCommission: netCommission, // Dùng chung cho cả TikTok & Shopee
+      status: status,
+      settlementStatus: status,
+      notes: notes,
+      source: 'manual',
+      updatedAt: now
+    };
+
+    if (platform === 'tiktok') {
+      record.actualCommissionBase = grossCommission;
+      record.taxPIT = withheldTax;
+      record.unitPrice = grossCommission;
+      record.soldQty = 1;
+    }
+
+    if (isEdit) {
+      const idx = state.affiliate[platform].findIndex(item => item.id === id);
+      if (idx !== -1) {
+        state.affiliate[platform][idx] = Object.assign({}, state.affiliate[platform][idx], record);
+      } else {
+        state.affiliate[platform].push(record);
+      }
+    } else {
+      state.affiliate[platform].push(record);
+    }
+
+    saveStateToLocalStorage();
+
+    if (typeof dbSaveAffiliateItem === 'function') {
+      dbSaveAffiliateItem(platform, record);
+    }
+
+    closeManualModal();
+    renderModule();
+    alert(`Đã lưu giao dịch ${platform === 'shopee' ? 'Shopee' : 'TikTok'} Affiliate thành công!`);
+  }
+
+  function deleteItem(platform, id, orderId) {
+    if (!confirm('Bạn có chắc chắn muốn xóa bản ghi Affiliate này không?')) return;
+
+    if (!state.affiliate || !state.affiliate[platform]) return;
+    state.affiliate[platform] = state.affiliate[platform].filter(item => item.id !== id);
+    saveStateToLocalStorage();
+
+    if (typeof dbDeleteAffiliateItem === 'function') {
+      dbDeleteAffiliateItem(platform, id, orderId);
+    }
+
+    renderModule();
+  }
+
+  // --- Modal Lịch sử file ---
+  function openHistoryModal() {
+    const modal = document.getElementById('affiliateHistoryModal');
+    if (!modal) return;
+    renderHistoryTable();
+    modal.classList.remove('hidden');
+    if (window.lucide) lucide.createIcons();
+  }
+
+  function closeHistoryModal() {
+    const modal = document.getElementById('affiliateHistoryModal');
+    if (modal) modal.classList.add('hidden');
+  }
+
+  function renderHistoryTable() {
+    const tbody = document.getElementById('affiliateHistoryTableBody');
+    const emptyState = document.getElementById('affiliateHistoryEmpty');
+    if (!tbody) return;
+
+    const list = (state.affiliate && state.affiliate.uploads) || [];
+    if (list.length === 0) {
+      tbody.innerHTML = '';
+      if (emptyState) emptyState.classList.remove('hidden');
+      return;
+    }
+    if (emptyState) emptyState.classList.add('hidden');
+
+    tbody.innerHTML = list.map(item => `
+      <tr>
+        <td>${item.uploadDate || ''}</td>
+        <td><strong>${item.fileName || ''}</strong></td>
+        <td style="text-align:right;">${(item.totalRows || 0).toLocaleString('vi-VN')}</td>
+        <td style="text-align:right; color:#86efac;">+${(item.newRows || 0).toLocaleString('vi-VN')}</td>
+        <td style="text-align:right; color:#93c5fd;">${(item.updatedRows || 0).toLocaleString('vi-VN')}</td>
+        <td style="text-align:center;">
+          ${item.driveFileUrl
+            ? `<a href="${item.driveFileUrl}" target="_blank" class="btn btn-xs btn-outline-primary" style="text-decoration:none;"><i data-lucide="external-link"></i> Mở Drive</a>`
+            : '<span class="text-muted">—</span>'}
+        </td>
+        <td style="text-align:center;"><span class="badge badge-status-paid">${item.status || 'Thành công'}</span></td>
+      </tr>
+    `).join('');
+    if (window.lucide) lucide.createIcons();
+  }
+
+  // --- Modal Chi tiết đơn hàng ---
+  function openDetailModal(item) {
+    const modal = document.getElementById('affiliateDetailModal');
+    const body = document.getElementById('affiliateDetailBody');
+    if (!modal || !body || !item) return;
+
+    const fmtDate = (d) => {
+      if (!d) return '—';
+      const p = String(d).split('-');
+      return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : d;
+    };
+
+    body.innerHTML = `
+      <div class="aff-detail-grid">
+        <div class="aff-detail-item">
+          <div class="aff-detail-label">Mã đơn hàng</div>
+          <div class="aff-detail-value" style="color:var(--primary);">${item.orderId || '—'}</div>
+        </div>
+        <div class="aff-detail-item">
+          <div class="aff-detail-label">Mã SKU / ID sản phẩm</div>
+          <div class="aff-detail-value">${item.skuId || item.productId || '—'}</div>
+        </div>
+        <div class="aff-detail-item full-width">
+          <div class="aff-detail-label">Tên sản phẩm / Chiến dịch</div>
+          <div class="aff-detail-value">${item.productName || '—'}</div>
+        </div>
+        <div class="aff-detail-item">
+          <div class="aff-detail-label">Ngày đặt hàng</div>
+          <div class="aff-detail-value">${fmtDate(item.orderDate)}</div>
+        </div>
+        <div class="aff-detail-item">
+          <div class="aff-detail-label">Ngày quyết toán</div>
+          <div class="aff-detail-value">${fmtDate(item.settlementDate)}</div>
+        </div>
+        <div class="aff-detail-item">
+          <div class="aff-detail-label">Số lượng bán / Hoàn tiền</div>
+          <div class="aff-detail-value">${item.soldQty || 1} cái ${item.refundQty ? `<span style="color:var(--danger);">(Hoàn: ${item.refundQty})</span>` : ''}</div>
+        </div>
+        <div class="aff-detail-item">
+          <div class="aff-detail-label">Giá trị GMV</div>
+          <div class="aff-detail-value">${formatCurrency(item.gmv || 0)}</div>
+        </div>
+        <div class="aff-detail-item">
+          <div class="aff-detail-label">Cơ sở hoa hồng thực tế</div>
+          <div class="aff-detail-value">${formatCurrency(item.actualCommissionBase || item.grossCommission || 0)}</div>
+        </div>
+        <div class="aff-detail-item">
+          <div class="aff-detail-label">Hoa hồng tiêu chuẩn</div>
+          <div class="aff-detail-value">${formatCurrency(item.standardCommission || 0)}</div>
+        </div>
+        <div class="aff-detail-item">
+          <div class="aff-detail-label">Thưởng & Hoa hồng QC</div>
+          <div class="aff-detail-value">${formatCurrency((item.shopAdsCommission || 0) + (item.bonus || 0) + (item.partnerBonus || 0))}</div>
+        </div>
+        <div class="aff-detail-item">
+          <div class="aff-detail-label">Các khoản thuế (PIT/ISR/IVA)</div>
+          <div class="aff-detail-value" style="color:var(--danger);">${formatCurrency((item.taxPIT || 0) + (item.taxISR || 0) + (item.taxIVA || 0) + (item.withheldTax || 0))}</div>
+        </div>
+        <div class="aff-detail-item full-width" style="background:rgba(99, 102, 241, 0.08); border-color:rgba(99, 102, 241, 0.25);">
+          <div class="aff-detail-label" style="color:#a5b4fc;">Tổng tiền thực nhận cuối cùng</div>
+          <div class="aff-detail-value" style="font-size:20px; font-weight:700; color:#4ade80;">
+            ${formatCurrency(item.totalNetCommission !== undefined ? item.totalNetCommission : (item.netCommission || 0))}
+          </div>
+        </div>
+        <div class="aff-detail-item">
+          <div class="aff-detail-label">Trạng thái quyết toán</div>
+          <div class="aff-detail-value">${item.settlementStatus || item.status || '—'}</div>
+        </div>
+        <div class="aff-detail-item">
+          <div class="aff-detail-label">Nguồn dữ liệu / Tên file</div>
+          <div class="aff-detail-value">${item.source === 'excel' ? `File: ${item.sourceFileName || 'XLSX'}` : 'Nhập thủ công'}</div>
+        </div>
+        ${item.notes ? `
+          <div class="aff-detail-item full-width">
+            <div class="aff-detail-label">Ghi chú</div>
+            <div class="aff-detail-value">${item.notes}</div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+
+    modal.classList.remove('hidden');
+    if (window.lucide) lucide.createIcons();
+  }
+
+  function closeDetailModal() {
+    const modal = document.getElementById('affiliateDetailModal');
+    if (modal) modal.classList.add('hidden');
+  }
+
+  // --- Rendering UI ---
+  function renderModule() {
+    renderKPIs();
+    renderTikTokTable();
+    renderShopeeTable();
+
+    // Badges count on sub-tabs
+    const tiktokCount = ((state.affiliate && state.affiliate.tiktok) || []).length;
+    const shopeeCount = ((state.affiliate && state.affiliate.shopee) || []).length;
+    const bTikTok = document.getElementById('badgeCountTikTok');
+    const bShopee = document.getElementById('badgeCountShopee');
+    if (bTikTok) bTikTok.innerText = tiktokCount;
+    if (bShopee) bShopee.innerText = shopeeCount;
+
+    if (window.lucide) lucide.createIcons();
+  }
+
+  function renderKPIs() {
+    const listTikTok = ((state.affiliate && state.affiliate.tiktok) || []);
+    const listShopee = ((state.affiliate && state.affiliate.shopee) || []);
+    const activeList = _currentTab === 'tiktok' ? listTikTok : listShopee;
+
+    let totalCommission = 0;
+    let settledCommission = 0;
+    let withdrawable = 0;
+    let paid = 0;
+
+    activeList.forEach(item => {
+      const net = Number(item.totalNetCommission !== undefined && item.totalNetCommission !== null
+        ? item.totalNetCommission
+        : (item.netCommission || item.grossCommission || 0));
+      totalCommission += net;
+
+      const st = String(item.settlementStatus || item.status || '').toLowerCase();
+      if (st.includes('đã quyết toán') || st.includes('settled')) {
+        settledCommission += net;
+      }
+      if (st.includes('có thể rút') || st.includes('withdrawable') || st.includes('chờ quyết toán') || st.includes('pending')) {
+        withdrawable += net;
+      }
+      if (st.includes('đã thanh toán') || st.includes('paid')) {
+        paid += net;
+      }
+    });
+
+    const elTotal = document.getElementById('kpiAffTotalCommission');
+    const elSettled = document.getElementById('kpiAffSettledCommission');
+    const elWithdrawable = document.getElementById('kpiAffWithdrawable');
+    const elPaid = document.getElementById('kpiAffPaid');
+
+    if (elTotal) elTotal.innerText = formatCurrency(totalCommission);
+    if (elSettled) elSettled.innerText = formatCurrency(settledCommission);
+    if (elWithdrawable) elWithdrawable.innerText = formatCurrency(withdrawable);
+    if (elPaid) elPaid.innerText = formatCurrency(paid);
+  }
+
+  function renderTikTokTable() {
+    const tbody = document.getElementById('tiktokOrdersTableBody');
+    const emptyState = document.getElementById('tiktokEmptyState');
+    if (!tbody) return;
+
+    let list = ((state.affiliate && state.affiliate.tiktok) || []);
+
+    // Bộ lọc trạng thái
+    const statusFilter = document.getElementById('tiktokFilterStatus') ? document.getElementById('tiktokFilterStatus').value : 'all';
+    if (statusFilter !== 'all') {
+      list = list.filter(item => {
+        const st = String(item.settlementStatus || item.status || '').toLowerCase();
+        if (statusFilter === 'settled') return st.includes('đã quyết toán') || st.includes('settled');
+        if (statusFilter === 'pending') return st.includes('chờ quyết toán') || st.includes('pending');
+        if (statusFilter === 'withdrawable') return st.includes('có thể rút') || st.includes('withdrawable');
+        if (statusFilter === 'paid') return st.includes('đã thanh toán') || st.includes('paid');
+        return true;
+      });
+    }
+
+    // Bộ lọc nguồn
+    const sourceFilter = document.getElementById('tiktokFilterSource') ? document.getElementById('tiktokFilterSource').value : 'all';
+    if (sourceFilter !== 'all') {
+      list = list.filter(item => (item.source || 'excel') === sourceFilter);
+    }
+
+    // Tìm kiếm
+    const searchVal = document.getElementById('tiktokSearchInput') ? document.getElementById('tiktokSearchInput').value.trim().toLowerCase() : '';
+    if (searchVal) {
+      list = list.filter(item => (
+        String(item.orderId || '').toLowerCase().includes(searchVal) ||
+        String(item.skuId || '').toLowerCase().includes(searchVal) ||
+        String(item.productName || '').toLowerCase().includes(searchVal) ||
+        String(item.shopName || '').toLowerCase().includes(searchVal)
+      ));
+    }
+
+    if (list.length === 0) {
+      tbody.innerHTML = '';
+      if (emptyState) emptyState.classList.remove('hidden');
+      return;
+    }
+    if (emptyState) emptyState.classList.add('hidden');
+
+    const fmtDate = (d) => {
+      if (!d) return '—';
+      const p = String(d).split('-');
+      return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : d;
+    };
+
+    tbody.innerHTML = list.map((item, idx) => {
+      const net = Number(item.totalNetCommission !== undefined && item.totalNetCommission !== null
+        ? item.totalNetCommission
+        : (item.netCommission || 0));
+      const isManual = item.source === 'manual';
+      const st = String(item.settlementStatus || item.status || '');
+      let stClass = 'badge-status-pending';
+      if (st.toLowerCase().includes('đã quyết toán')) stClass = 'badge-status-settled';
+      if (st.toLowerCase().includes('đã thanh toán')) stClass = 'badge-status-paid';
+      if (st.toLowerCase().includes('có thể rút')) stClass = 'badge-status-withdrawable';
+
+      return `
+        <tr>
+          <td>${fmtDate(item.orderDate)}</td>
+          <td>${fmtDate(item.settlementDate)}</td>
+          <td><strong style="color:var(--text-white); font-family:monospace;">${item.orderId || '—'}</strong></td>
+          <td title="${item.productName || ''}" style="max-width:240px; overflow:hidden; text-overflow:ellipsis;">${item.productName || '—'}</td>
+          <td style="text-align:right;">${item.soldQty || 1}</td>
+          <td style="text-align:right;">${formatCurrency(item.gmv || 0)}</td>
+          <td style="text-align:right;">${formatCurrency(item.actualCommissionBase || item.grossCommission || 0)}</td>
+          <td style="text-align:right; font-weight:700; color:#4ade80;">${formatCurrency(net)}</td>
+          <td style="text-align:center;"><span class="badge ${stClass}">${st || 'Chờ quyết toán'}</span></td>
+          <td style="text-align:center;"><span class="affiliate-source-badge ${isManual ? 'badge-source-manual' : 'badge-source-excel'}">${isManual ? 'Thủ công' : 'Excel'}</span></td>
+          <td style="text-align:center;">
+            <div style="display:inline-flex; gap:4px;">
+              <button type="button" class="btn btn-xs btn-outline-primary" onclick="AffiliateModule.openDetailModal(state.affiliate.tiktok[${idx}])" title="Xem chi tiết">
+                <i data-lucide="eye"></i>
+              </button>
+              ${isManual ? `
+                <button type="button" class="btn btn-xs btn-secondary" onclick="AffiliateModule.openManualModal('tiktok', state.affiliate.tiktok[${idx}])" title="Sửa">
+                  <i data-lucide="edit"></i>
+                </button>
+                <button type="button" class="btn btn-xs btn-outline-danger" onclick="AffiliateModule.deleteItem('tiktok', '${item.id}', '${item.orderId || ''}')" title="Xóa">
+                  <i data-lucide="trash-2"></i>
+                </button>
+              ` : ''}
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    if (window.lucide) lucide.createIcons();
+  }
+
+  function renderShopeeTable() {
+    const tbody = document.getElementById('shopeeOrdersTableBody');
+    const emptyState = document.getElementById('shopeeEmptyState');
+    if (!tbody) return;
+
+    let list = ((state.affiliate && state.affiliate.shopee) || []);
+
+    const statusFilter = document.getElementById('shopeeFilterStatus') ? document.getElementById('shopeeFilterStatus').value : 'all';
+    if (statusFilter !== 'all') {
+      list = list.filter(item => {
+        const st = String(item.status || '').toLowerCase();
+        if (statusFilter === 'settled') return st.includes('đã quyết toán');
+        if (statusFilter === 'pending') return st.includes('chờ quyết toán');
+        if (statusFilter === 'paid') return st.includes('đã thanh toán');
+        return true;
+      });
+    }
+
+    const searchVal = document.getElementById('shopeeSearchInput') ? document.getElementById('shopeeSearchInput').value.trim().toLowerCase() : '';
+    if (searchVal) {
+      list = list.filter(item => (
+        String(item.orderId || '').toLowerCase().includes(searchVal) ||
+        String(item.productName || '').toLowerCase().includes(searchVal) ||
+        String(item.notes || '').toLowerCase().includes(searchVal)
+      ));
+    }
+
+    if (list.length === 0) {
+      tbody.innerHTML = '';
+      if (emptyState) emptyState.classList.remove('hidden');
+      return;
+    }
+    if (emptyState) emptyState.classList.add('hidden');
+
+    const fmtDate = (d) => {
+      if (!d) return '—';
+      const p = String(d).split('-');
+      return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : d;
+    };
+
+    tbody.innerHTML = list.map((item, idx) => {
+      const net = Number(item.netCommission || item.totalNetCommission || 0);
+      const st = String(item.status || 'Đã quyết toán');
+      let stClass = 'badge-status-settled';
+      if (st.toLowerCase().includes('chờ')) stClass = 'badge-status-pending';
+      if (st.toLowerCase().includes('đã thanh toán')) stClass = 'badge-status-paid';
+
+      return `
+        <tr>
+          <td>${fmtDate(item.orderDate)}</td>
+          <td>${fmtDate(item.settlementDate)}</td>
+          <td><strong style="color:var(--text-white); font-family:monospace;">${item.orderId || '—'}</strong></td>
+          <td title="${item.productName || ''}">${item.productName || '—'}</td>
+          <td style="text-align:right;">${formatCurrency(item.grossCommission || 0)}</td>
+          <td style="text-align:right; color:var(--danger);">${formatCurrency(item.withheldTax || 0)}</td>
+          <td style="text-align:right; font-weight:700; color:#4ade80;">${formatCurrency(net)}</td>
+          <td style="text-align:center;"><span class="badge ${stClass}">${st}</span></td>
+          <td style="text-align:center;"><span class="affiliate-source-badge badge-source-manual">Thủ công</span></td>
+          <td style="text-align:center;">
+            <div style="display:inline-flex; gap:4px;">
+              <button type="button" class="btn btn-xs btn-secondary" onclick="AffiliateModule.openManualModal('shopee', state.affiliate.shopee[${idx}])" title="Sửa">
+                <i data-lucide="edit"></i>
+              </button>
+              <button type="button" class="btn btn-xs btn-outline-danger" onclick="AffiliateModule.deleteItem('shopee', '${item.id}', '${item.orderId || ''}')" title="Xóa">
+                <i data-lucide="trash-2"></i>
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    if (window.lucide) lucide.createIcons();
+  }
+
+  return {
+    init: init,
+    render: renderModule,
+    openManualModal: openManualModal,
+    closeManualModal: closeManualModal,
+    openHistoryModal: openHistoryModal,
+    closeHistoryModal: closeHistoryModal,
+    openDetailModal: openDetailModal,
+    closeDetailModal: closeDetailModal,
+    deleteItem: deleteItem
+  };
+})();
+
+// Global functions để gọi từ onclick trong HTML
+window.renderAffiliateModule = function() {
+  if (window.AffiliateModule) window.AffiliateModule.render();
+};
+window.openAffiliateManualModal = function(platform, item) {
+  if (window.AffiliateModule) window.AffiliateModule.openManualModal(platform, item);
+};
+window.closeAffiliateManualModal = function() {
+  if (window.AffiliateModule) window.AffiliateModule.closeManualModal();
+};
+window.closeAffiliateHistoryModal = function() {
+  if (window.AffiliateModule) window.AffiliateModule.closeHistoryModal();
+};
+window.closeAffiliateDetailModal = function() {
+  if (window.AffiliateModule) window.AffiliateModule.closeDetailModal();
+};
+
 

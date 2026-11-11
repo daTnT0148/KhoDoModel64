@@ -489,6 +489,49 @@ function mergeStateFromCloud(cloudData) {
       }
     } catch (e) { console.error("Error merging car images from cloud", e); }
   }
+
+  // --- Affiliate Marketing ---
+  if (cloudData.affiliate) {
+    if (!state.affiliate) state.affiliate = { tiktok: [], shopee: [], uploads: [] };
+
+    // Merge TikTok: index by orderId_skuId
+    if (Array.isArray(cloudData.affiliate.tiktok)) {
+      const localMap = new Map();
+      (state.affiliate.tiktok || []).forEach(item => {
+        const key = item.orderId + "_" + (item.skuId || item.productId || "0");
+        localMap.set(key, item);
+      });
+      cloudData.affiliate.tiktok.forEach(cloudItem => {
+        const key = cloudItem.orderId + "_" + (cloudItem.skuId || cloudItem.productId || "0");
+        const localItem = localMap.get(key);
+        if (!localItem || (cloudItem.updatedAt || 0) >= (localItem.updatedAt || 0)) {
+          localMap.set(key, cloudItem);
+        }
+      });
+      state.affiliate.tiktok = Array.from(localMap.values());
+    }
+
+    // Merge Shopee: index by id
+    if (Array.isArray(cloudData.affiliate.shopee)) {
+      const localMap = new Map();
+      (state.affiliate.shopee || []).forEach(item => localMap.set(item.id, item));
+      cloudData.affiliate.shopee.forEach(cloudItem => {
+        const localItem = localMap.get(cloudItem.id);
+        if (!localItem || (cloudItem.updatedAt || 0) >= (localItem.updatedAt || 0)) {
+          localMap.set(cloudItem.id, cloudItem);
+        }
+      });
+      state.affiliate.shopee = Array.from(localMap.values());
+    }
+
+    // Merge Uploads
+    if (Array.isArray(cloudData.affiliate.uploads) && cloudData.affiliate.uploads.length > 0) {
+      const upMap = new Map();
+      (state.affiliate.uploads || []).forEach(u => upMap.set(u.uploadId, u));
+      cloudData.affiliate.uploads.forEach(u => upMap.set(u.uploadId, u));
+      state.affiliate.uploads = Array.from(upMap.values());
+    }
+  }
 }
 
 // ─── Load dữ liệu khi mở app ─────────────────────────────────────────────────
@@ -767,4 +810,91 @@ async function dbUploadImage(file, oldFileId = "", imgKey = "") {
 
     reader.readAsDataURL(optimized.blob);
   });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AFFILIATE MARKETING (TikTok & Shopee)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function dbGetAffiliateData() {
+  if (!isCloudConfigured()) return { tiktok: [], shopee: [], uploads: [] };
+  try {
+    return await rawApiPost("getAffiliateData", {});
+  } catch (err) {
+    console.error("[Affiliate] dbGetAffiliateData error:", err);
+    return { tiktok: [], shopee: [], uploads: [] };
+  }
+}
+
+async function dbSaveAffiliateBatch(platform, items) {
+  if (!isCloudConfigured() || !items || items.length === 0) return { ok: true };
+  try {
+    showSyncStatus("syncing", `Đang đồng bộ ${items.length} đơn Affiliate...`);
+    const res = await rawApiPost("saveAffiliateBatch", { platform, items });
+    showSyncStatus("success", `Đã lưu ${items.length} đơn Affiliate ✓`);
+    return res;
+  } catch (err) {
+    console.error("[Affiliate] dbSaveAffiliateBatch error:", err);
+    showSyncStatus("error", "Lỗi đồng bộ Affiliate lên Cloud");
+    return { ok: false, error: err.message };
+  }
+}
+
+async function dbSaveAffiliateItem(platform, item) {
+  if (!isCloudConfigured() || !item) return { ok: true };
+  try {
+    showSyncStatus("syncing", "Đang lưu giao dịch Affiliate...");
+    const res = await rawApiPost("saveAffiliateItem", { platform, item });
+    showSyncStatus("success", "Đã lưu Affiliate ✓");
+    return res;
+  } catch (err) {
+    console.error("[Affiliate] dbSaveAffiliateItem error:", err);
+    showSyncStatus("error", "Lỗi lưu Affiliate lên Cloud");
+    return { ok: false, error: err.message };
+  }
+}
+
+async function dbDeleteAffiliateItem(platform, id, orderId, skuId) {
+  if (!isCloudConfigured() || !id) return { ok: true };
+  try {
+    showSyncStatus("syncing", "Đang xóa Affiliate...");
+    const res = await rawApiPost("deleteAffiliateItem", { platform, id, orderId, skuId });
+    showSyncStatus("success", "Đã xóa Affiliate ✓");
+    return res;
+  } catch (err) {
+    console.error("[Affiliate] dbDeleteAffiliateItem error:", err);
+    showSyncStatus("error", "Lỗi xóa Affiliate trên Cloud");
+    return { ok: false, error: err.message };
+  }
+}
+
+async function dbUploadAffiliateFile(fileName, base64, mimeType, year) {
+  if (!isCloudConfigured()) return null;
+  try {
+    showSyncStatus("syncing", "Đang lưu file gốc lên Google Drive...");
+    const res = await rawApiPost("uploadAffiliateFile", {
+      fileName: fileName,
+      base64: base64,
+      mimeType: mimeType || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      year: year || new Date().getFullYear()
+    });
+    if (res && res.ok) {
+      showSyncStatus("success", "Đã lưu file lên Google Drive ✓");
+    }
+    return res;
+  } catch (err) {
+    console.error("[Affiliate] dbUploadAffiliateFile error:", err);
+    showSyncStatus("error", "Lỗi lưu file lên Drive: " + err.message);
+    return null;
+  }
+}
+
+async function dbSaveAffiliateUploadLog(logData) {
+  if (!isCloudConfigured() || !logData) return { ok: true };
+  try {
+    return await rawApiPost("saveAffiliateUploadLog", logData);
+  } catch (err) {
+    console.error("[Affiliate] dbSaveAffiliateUploadLog error:", err);
+    return { ok: false };
+  }
 }
