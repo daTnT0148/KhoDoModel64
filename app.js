@@ -8366,6 +8366,25 @@ window.AffiliateModule = (function() {
     const map = {};
     if (!Array.isArray(headers)) return map;
 
+    // Hàm normalize mạnh: xử lý Unicode lỗi từ ExcelJS
+    function strongNormalize(str) {
+      if (!str) return '';
+      let s = String(str);
+      // Thử decode nếu chuỗi bị mojibake (UTF-8 bị hiểu là Latin-1)
+      try {
+        const recovered = decodeURIComponent(escape(s));
+        if (recovered !== s) s = recovered;
+      } catch (_) {}
+      return s
+        .replace(/[\uFEFF\u00A0\u200B\u200C\u200D]/g, ' ')
+        .replace(/[\u2018\u2019]/g, "'")
+        .replace(/[\u201C\u201D]/g, '"')
+        .replace(/[\u2013\u2014]/g, '-')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+    }
+
     // Danh sách quy tắc định nghĩa cột theo thứ tự ưu tiên (từ khóa dài / cụ thể trước)
     const FIELD_RULES = [
       {
@@ -8598,11 +8617,7 @@ window.AffiliateModule = (function() {
 
     headers.forEach((h, idx) => {
       if (h === undefined || h === null) return;
-      const clean = String(h)
-        .replace(/[\uFEFF\u00A0\u200B]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .toLowerCase();
+      const clean = strongNormalize(h);
       if (!clean) return;
 
       // Bỏ qua hoàn toàn các cột ước tính (ước tính, est., estimated, ước_tính)
@@ -8838,23 +8853,41 @@ window.AffiliateModule = (function() {
         throw new Error('File báo cáo trống hoặc không thể đọc được nội dung.');
       }
 
-      // Quét tối đa 10 dòng đầu tìm dòng tiêu đề chứa từ khóa
-      let headerRowIndex = -1;
-      let rawHeaders = [];
-      for (let r = 0; r < Math.min(10, matrix.length); r++) {
+      // Tìm header row: chọn dòng trong 15 dòng đầu có NHIỀU từ khóa TikTok khớp nhất (>= 3 từ khóa)
+      const HEADER_KEYWORDS = [
+        'đơn hàng', 'mã đơn', 'order', 'sku', 'sản phẩm', 'product',
+        'hoa hồng', 'commission', 'gmv', 'doanh thu', 'số lượng',
+        'qty', 'giá', 'price', 'trạng thái', 'status', 'ngày', 'date',
+        'thực nhận', 'net', 'thuế', 'tax'
+      ];
+
+      let bestRowIndex = -1;
+      let bestScore = 0;
+      let bestRow = [];
+
+      for (let r = 0; r < Math.min(15, matrix.length); r++) {
         const row = matrix[r];
-        const joined = row.join(' ').toLowerCase();
-        if (joined.includes('đơn hàng') || joined.includes('sku') || joined.includes('hoa hồng') || joined.includes('order') || joined.includes('gmv')) {
-          headerRowIndex = r;
-          rawHeaders = row;
-          break;
+        if (!row || !Array.isArray(row)) continue;
+        const joined = row.map(c => String(c || '').toLowerCase()).join(' | ');
+        let score = 0;
+        HEADER_KEYWORDS.forEach(kw => {
+          if (joined.includes(kw)) score++;
+        });
+        if (score > bestScore) {
+          bestScore = score;
+          bestRowIndex = r;
+          bestRow = row;
         }
       }
 
-      if (headerRowIndex === -1 && matrix.length > 0) {
-        headerRowIndex = 0;
-        rawHeaders = matrix[0];
+      if (bestRowIndex === -1 || bestScore < 3) {
+        // Không tìm được header → báo lỗi kèm debug rõ ràng
+        const preview = matrix.slice(0, 3).map(r => r.slice(0, 8).join(' | ')).join('\n');
+        throw new Error('Không tìm thấy dòng header (cần >= 3 từ khóa). 3 dòng đầu:\n' + preview);
       }
+
+      const headerRowIndex = bestRowIndex;
+      const rawHeaders = bestRow;
 
       const colMap = mapTikTokHeaders(rawHeaders);
       const hasKeyCol = (
