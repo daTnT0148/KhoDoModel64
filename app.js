@@ -8347,12 +8347,18 @@ window.AffiliateModule = (function() {
     }
   }
 
-  // Tiện ích format số
+  // Tiện ích format số (hỗ trợ cả số VND chuẩn và số nghìn đồng như 41.85, 279)
   function parseCurrencyNumber(str) {
-    if (typeof str === 'number') return str;
+    if (typeof str === 'number') {
+      if (isNaN(str)) return 0;
+      if (str > 0 && str < 1000) return Math.round(str * 1000);
+      return Math.round(str);
+    }
     const clean = String(str || '').replace(/[^0-9.-]/g, '');
     const num = parseFloat(clean);
-    return isNaN(num) ? 0 : Math.round(num);
+    if (isNaN(num)) return 0;
+    if (num > 0 && num < 1000) return Math.round(num * 1000);
+    return Math.round(num);
   }
 
   // --- Header mapping cho TikTok XLSX ---
@@ -8434,12 +8440,118 @@ window.AffiliateModule = (function() {
     return s.slice(0, 10);
   }
 
-  // --- Xử lý tải và phân tích file TikTok XLSX ---
+  // Parser CSV chuẩn hỗ trợ dấu ngoặc kép, dấu phẩy, tab, xuống dòng trong chuỗi
+  function parseCSV(text) {
+    if (!text) return [];
+    // Loại bỏ BOM UTF-8 nếu có
+    const cleanText = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const rows = [];
+    let currentRow = [];
+    let currentCell = '';
+    let insideQuotes = false;
+
+    for (let i = 0; i < cleanText.length; i++) {
+      const char = cleanText[i];
+      const nextChar = cleanText[i + 1];
+
+      if (insideQuotes) {
+        if (char === '"') {
+          if (nextChar === '"') {
+            currentCell += '"';
+            i++;
+          } else {
+            insideQuotes = false;
+          }
+        } else {
+          currentCell += char;
+        }
+      } else {
+        if (char === '"') {
+          insideQuotes = true;
+        } else if (char === ',' || char === '\t') {
+          currentRow.push(currentCell.trim());
+          currentCell = '';
+        } else if (char === '\n') {
+          currentRow.push(currentCell.trim());
+          if (currentRow.some(c => c !== '')) {
+            rows.push(currentRow);
+          }
+          currentRow = [];
+          currentCell = '';
+        } else {
+          currentCell += char;
+        }
+      }
+    }
+    if (currentCell || currentRow.length > 0) {
+      currentRow.push(currentCell.trim());
+      if (currentRow.some(c => c !== '')) {
+        rows.push(currentRow);
+      }
+    }
+    return rows;
+  }
+
+  // Trích xuất ma trận 2D từ file XLSX qua ExcelJS
+  async function extractMatrixFromExcel(arrayBuffer) {
+    if (typeof ExcelJS === 'undefined') return [];
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(arrayBuffer);
+    const worksheets = workbook.worksheets || [];
+    if (worksheets.length === 0) return [];
+
+    let targetSheet = null;
+    for (const ws of worksheets) {
+      let foundHeader = false;
+      const rc = Math.min(10, ws.rowCount || ws.actualRowCount || (ws.lastRow ? ws.lastRow.number : 0));
+      for (let r = 1; r <= rc; r++) {
+        const vals = [];
+        ws.getRow(r).eachCell({ includeEmpty: true }, c => vals.push(c && c.value ? String(c.value).toLowerCase() : ''));
+        const t = vals.join(' ');
+        if (t.includes('đơn hàng') || t.includes('sku') || t.includes('hoa hồng') || t.includes('order') || t.includes('gmv')) {
+          foundHeader = true;
+          break;
+        }
+      }
+      if (foundHeader) {
+        targetSheet = ws;
+        break;
+      }
+    }
+    if (!targetSheet) {
+      targetSheet = worksheets.find(ws => (ws.name || '').trim().toLowerCase() === 'sheet1') || worksheets[0];
+    }
+    if (!targetSheet) return [];
+
+    const matrix = [];
+    const maxRow = Math.max(targetSheet.rowCount || 0, targetSheet.actualRowCount || 0, targetSheet.lastRow ? targetSheet.lastRow.number : 0);
+
+    for (let r = 1; r <= maxRow; r++) {
+      const row = targetSheet.getRow(r);
+      const rowArr = [];
+      const cellCount = Math.max(row.cellCount || 0, row.actualCellCount || 0, 50);
+      for (let c = 1; c <= cellCount; c++) {
+        const cell = row.getCell(c);
+        let val = (cell && cell.value !== null && cell.value !== undefined) ? cell.value : '';
+        if (typeof val === 'object' && val !== null) {
+          if (val.result !== undefined) val = val.result;
+          else if (val.text !== undefined) val = val.text;
+        }
+        rowArr.push(val !== undefined && val !== null ? String(val).trim() : '');
+      }
+      if (rowArr.some(c => c !== '')) {
+        matrix.push(rowArr);
+      }
+    }
+    return matrix;
+  }
+
+  // --- Xử lý tải và phân tích file TikTok XLSX / CSV ---
   async function handleFile(file) {
     if (!file) return;
     const fileNameLower = (file.name || '').toLowerCase();
-    if (!fileNameLower.endsWith('.xlsx') && !fileNameLower.endsWith('.xls')) {
-      alert('⚠️ Vui lòng chọn file định dạng .xlsx của TikTok Shop Affiliate.');
+    if (!fileNameLower.endsWith('.xlsx') && !fileNameLower.endsWith('.xls') && !fileNameLower.endsWith('.csv') && !fileNameLower.endsWith('.tsv') && !fileNameLower.endsWith('.txt')) {
+      alert('⚠️ Vui lòng chọn file báo cáo định dạng .xlsx hoặc .csv của TikTok Shop Affiliate.');
       return;
     }
 
@@ -8454,7 +8566,7 @@ window.AffiliateModule = (function() {
     };
 
     try {
-      updateProgress(20, 'Đang đọc nội dung file Excel...');
+      updateProgress(20, 'Đang đọc nội dung file báo cáo...');
 
       // Đọc file thành ArrayBuffer và Base64 đồng thời
       const arrayBuffer = await file.arrayBuffer();
@@ -8465,105 +8577,52 @@ window.AffiliateModule = (function() {
         reader.readAsDataURL(file);
       });
 
-      updateProgress(45, 'Đang phân tích cấu trúc cột TikTok Affiliate...');
+      updateProgress(45, 'Đang phân tích cấu trúc dữ liệu TikTok Affiliate...');
 
-      if (typeof ExcelJS === 'undefined') {
-        throw new Error('Thư viện ExcelJS chưa được tải.');
-      }
+      // Kiểm tra xem file có phải là định dạng nén PKZip (XLSX thực sự) không
+      const uint8 = new Uint8Array(arrayBuffer);
+      const isZip = uint8.length >= 4 && uint8[0] === 0x50 && uint8[1] === 0x4B; // 'PK'
 
-      const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.load(arrayBuffer);
-
-      // Helper lấy số dòng thực tế an toàn của sheet trong ExcelJS
-      const getSheetTotalRows = (ws) => {
-        if (!ws) return 0;
-        let count = 0;
-        if (typeof ws.actualRowCount === 'number' && ws.actualRowCount > 0) {
-          count = Math.max(count, ws.actualRowCount);
-        }
-        if (typeof ws.rowCount === 'number' && ws.rowCount > 0) {
-          count = Math.max(count, ws.rowCount);
-        }
-        if (ws.lastRow && typeof ws.lastRow.number === 'number') {
-          count = Math.max(count, ws.lastRow.number);
-        }
-        if (count === 0 && typeof ws.eachRow === 'function') {
-          ws.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-            if (rowNumber > count) count = rowNumber;
-          });
-        }
-        return count;
-      };
-
-      // Tìm sheet chứa dữ liệu TikTok Affiliate:
-      const worksheets = workbook.worksheets || [];
-      let sheet = null;
-
-      // 1. Quét tìm sheet có dòng chứa từ khóa TikTok Affiliate
-      for (const ws of worksheets) {
-        const rc = getSheetTotalRows(ws);
-        if (rc > 0) {
-          for (let r = 1; r <= Math.min(10, rc); r++) {
-            const rowVals = [];
-            ws.getRow(r).eachCell({ includeEmpty: true }, (cell) => {
-              if (cell && cell.value !== null && cell.value !== undefined) {
-                rowVals.push(String(cell.value).toLowerCase());
-              }
-            });
-            const text = rowVals.join(' ');
-            if (text.includes('đơn hàng') || text.includes('sku') || text.includes('hoa hồng') || text.includes('order') || text.includes('gmv') || text.includes('commission')) {
-              sheet = ws;
-              break;
-            }
-          }
-          if (sheet) break;
+      let matrix = [];
+      if (isZip) {
+        try {
+          matrix = await extractMatrixFromExcel(arrayBuffer);
+        } catch (excelErr) {
+          console.warn("ExcelJS không đọc được file zip, chuyển sang đọc CSV text:", excelErr);
         }
       }
 
-      // 2. Nếu chưa tìm thấy, ưu tiên sheet có tên 'sheet1' (không phân biệt hoa thường)
-      if (!sheet) {
-        sheet = worksheets.find(ws => (ws.name || '').trim().toLowerCase() === 'sheet1');
+      // Nếu không phải file zip hoặc ExcelJS không đọc được trang tính, giải mã dạng text / CSV
+      if (!matrix || matrix.length === 0) {
+        let textContent = '';
+        try {
+          textContent = new TextDecoder('utf-8').decode(uint8);
+        } catch (e) {
+          textContent = await file.text();
+        }
+        matrix = parseCSV(textContent);
       }
 
-      // 3. Nếu vẫn chưa có, lấy sheet đầu tiên có ít nhất 1 dòng
-      if (!sheet) {
-        sheet = worksheets.find(ws => getSheetTotalRows(ws) > 0);
+      if (!matrix || matrix.length === 0) {
+        throw new Error('File báo cáo trống hoặc không thể đọc được nội dung.');
       }
 
-      // 4. Fallback cuối cùng
-      if (!sheet && worksheets.length > 0) {
-        sheet = worksheets[0];
-      }
-
-      if (!sheet) {
-        throw new Error('Không tìm thấy bất kỳ trang tính (sheet) nào trong file Excel đã chọn.');
-      }
-
-      const totalRows = getSheetTotalRows(sheet);
-      if (totalRows === 0) {
-        throw new Error('Trang tính trong file Excel hoàn toàn trống (không có dữ liệu).');
-      }
-
-      // Đọc dòng tiêu đề (quét tối đa 10 dòng đầu tìm dòng tiêu đề)
-      let headerRowIndex = 1;
+      // Quét tối đa 10 dòng đầu tìm dòng tiêu đề chứa từ khóa
+      let headerRowIndex = -1;
       let rawHeaders = [];
-      for (let r = 1; r <= Math.min(10, totalRows); r++) {
-        const rowVals = [];
-        sheet.getRow(r).eachCell({ includeEmpty: true }, (cell, colNumber) => {
-          rowVals[colNumber] = (cell && cell.value !== null && cell.value !== undefined) ? String(cell.value).trim() : '';
-        });
-        const joined = rowVals.join(' ').toLowerCase();
-        if (joined.includes('đơn hàng') || joined.includes('sku') || joined.includes('hoa hồng') || joined.includes('order') || joined.includes('gmv') || joined.includes('commission')) {
+      for (let r = 0; r < Math.min(10, matrix.length); r++) {
+        const row = matrix[r];
+        const joined = row.join(' ').toLowerCase();
+        if (joined.includes('đơn hàng') || joined.includes('sku') || joined.includes('hoa hồng') || joined.includes('order') || joined.includes('gmv')) {
           headerRowIndex = r;
-          rawHeaders = rowVals;
+          rawHeaders = row;
           break;
         }
       }
 
-      if (rawHeaders.length === 0) {
-        sheet.getRow(1).eachCell({ includeEmpty: true }, (cell, colNumber) => {
-          rawHeaders[colNumber] = (cell && cell.value !== null && cell.value !== undefined) ? String(cell.value).trim() : '';
-        });
+      if (headerRowIndex === -1 && matrix.length > 0) {
+        headerRowIndex = 0;
+        rawHeaders = matrix[0];
       }
 
       const colMap = mapTikTokHeaders(rawHeaders);
@@ -8574,13 +8633,13 @@ window.AffiliateModule = (function() {
       updateProgress(65, 'Đang trích xuất đơn hàng và đối soát trùng lặp...');
 
       const parsedRows = [];
-      for (let r = headerRowIndex + 1; r <= totalRows; r++) {
-        const row = sheet.getRow(r);
-        if (!row) continue;
+      for (let r = headerRowIndex + 1; r < matrix.length; r++) {
+        const row = matrix[r];
+        if (!row || row.length === 0) continue;
+
         const getVal = (colIdx) => {
-          if (!colIdx) return null;
-          const cell = row.getCell(colIdx);
-          return cell ? cell.value : null;
+          if (colIdx === undefined || colIdx === null || colIdx < 0 || colIdx >= row.length) return '';
+          return row[colIdx];
         };
 
         const orderId = String(getVal(colMap.orderId) || '').trim();
@@ -8634,7 +8693,7 @@ window.AffiliateModule = (function() {
       }
 
       if (parsedRows.length === 0) {
-        throw new Error('Không tìm thấy dòng dữ liệu đơn hàng nào trong file.');
+        throw new Error('File không có bất kỳ dòng đơn hàng nào để nhập.');
       }
 
       // --- Chống trùng và cập nhật vào state ---
