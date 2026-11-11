@@ -8793,15 +8793,14 @@ window.AffiliateModule = (function() {
   async function handleFile(file) {
     if (!file) return;
     const fileNameLower = (file.name || '').toLowerCase();
-    if (!fileNameLower.endsWith('.xlsx') && !fileNameLower.endsWith('.xls') && !fileNameLower.endsWith('.csv') && !fileNameLower.endsWith('.tsv') && !fileNameLower.endsWith('.txt')) {
-      alert('⚠️ Vui lòng chọn file báo cáo định dạng .xlsx hoặc .csv của TikTok Shop Affiliate.');
+    if (!fileNameLower.endsWith('.xlsx') && !fileNameLower.endsWith('.xls') && !fileNameLower.endsWith('.csv')) {
+      alert('⚠️ Vui lòng chọn file .xlsx, .xls hoặc .csv');
       return;
     }
 
     const progressDiv = document.getElementById('tiktokUploadProgress');
     const progressBar = document.getElementById('tiktokProgressBar');
     const progressText = document.getElementById('tiktokProgressText');
-
     const updateProgress = (pct, text) => {
       if (progressDiv) progressDiv.classList.remove('hidden');
       if (progressBar) progressBar.style.width = pct + '%';
@@ -8809,103 +8808,106 @@ window.AffiliateModule = (function() {
     };
 
     try {
-      updateProgress(20, 'Đang đọc nội dung file báo cáo...');
-
-      // Đọc file thành ArrayBuffer và Base64 đồng thời
+      updateProgress(10, 'Đang đọc file...');
       const arrayBuffer = await file.arrayBuffer();
-      const base64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result.split(',')[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-
-      updateProgress(45, 'Đang phân tích cấu trúc dữ liệu TikTok Affiliate...');
-
-      // Kiểm tra xem file có phải là định dạng nén PKZip (XLSX thực sự) không
       const uint8 = new Uint8Array(arrayBuffer);
-      const isZip = uint8.length >= 4 && uint8[0] === 0x50 && uint8[1] === 0x4B; // 'PK'
+      const isZip = uint8.length >= 4 && uint8[0] === 0x50 && uint8[1] === 0x4B;
+
+      // Đọc file thành base64 phục vụ upload Google Drive
+      let base64 = '';
+      try {
+        base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result.split(',')[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      } catch (b64Err) {
+        console.warn('Không đọc được base64 của file:', b64Err);
+      }
 
       let matrix = [];
-      if (isZip) {
-        try {
-          matrix = await extractMatrixFromExcel(arrayBuffer);
-        } catch (excelErr) {
-          console.warn("ExcelJS không đọc được file zip, chuyển sang đọc CSV text:", excelErr);
-        }
-      }
 
-      // Nếu không phải file zip hoặc ExcelJS không đọc được trang tính, giải mã dạng text / CSV
-      if (!matrix || matrix.length === 0) {
-        if (isZip) {
-          throw new Error('Không thể phân tích cấu trúc file Excel (.xlsx). Vui lòng kiểm tra lại file hoặc mở bằng Excel và lưu lại.');
-        }
-        let textContent = '';
+      // --- LỚP 1: Đọc bằng SheetJS (ưu tiên vì đọc được mọi file Excel) ---
+      if (isZip && typeof XLSX !== 'undefined') {
         try {
-          textContent = new TextDecoder('utf-8').decode(uint8);
+          const wb = XLSX.read(uint8, { type: 'array', cellDates: true });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+          matrix = rows.map(r => r.map(c => String(c || '').trim()));
+          console.log('[SheetJS] Đọc được ' + matrix.length + ' dòng');
         } catch (e) {
-          textContent = await file.text();
+          console.warn('[SheetJS] Fail:', e.message);
         }
-        matrix = parseCSV(textContent);
+      }
+
+      // --- LỚP 2: Nếu SheetJS fail, thử bằng ExcelJS ---
+      if ((!matrix || matrix.length === 0) && isZip && typeof ExcelJS !== 'undefined') {
+        try {
+          const wb = new ExcelJS.Workbook();
+          await wb.xlsx.load(arrayBuffer);
+          const ws = wb.worksheets[0];
+          if (ws) {
+            for (let r = 1; r <= ws.rowCount; r++) {
+              const row = ws.getRow(r);
+              const arr = [];
+              for (let c = 1; c <= ws.columnCount; c++) {
+                let v = row.getCell(c).value;
+                if (typeof v === 'object' && v !== null) {
+                  v = v.result !== undefined ? v.result : v.text !== undefined ? v.text : (Array.isArray(v.richText) ? v.richText.map(t => t.text || '').join('') : '');
+                }
+                arr.push(v !== null && v !== undefined ? String(v).trim() : '');
+              }
+              if (arr.some(x => x !== '')) matrix.push(arr);
+            }
+            console.log('[ExcelJS] Đọc được ' + matrix.length + ' dòng');
+          }
+        } catch (e) {
+          console.warn('[ExcelJS] Fail:', e.message);
+        }
+      }
+
+      // --- LỚP 3: Nếu không phải Excel, đọc dạng CSV ---
+      if ((!matrix || matrix.length === 0) && !isZip) {
+        const text = await file.text();
+        matrix = parseCSV(text);
       }
 
       if (!matrix || matrix.length === 0) {
-        throw new Error('File báo cáo trống hoặc không thể đọc được nội dung.');
+        throw new Error('Không đọc được file. SheetJS: ' + (typeof XLSX) + ', ExcelJS: ' + (typeof ExcelJS) + '. Hãy bật F12 Console xem chi tiết.');
       }
 
-      // Tìm header row: chọn dòng trong 15 dòng đầu có NHIỀU từ khóa TikTok khớp nhất (>= 3 từ khóa)
-      const HEADER_KEYWORDS = [
-        'đơn hàng', 'mã đơn', 'order', 'sku', 'sản phẩm', 'product',
-        'hoa hồng', 'commission', 'gmv', 'doanh thu', 'số lượng',
-        'qty', 'giá', 'price', 'trạng thái', 'status', 'ngày', 'date',
-        'thực nhận', 'net', 'thuế', 'tax'
-      ];
+      updateProgress(40, 'Đang tìm header...');
 
-      let bestRowIndex = -1;
-      let bestScore = 0;
-      let bestRow = [];
-
-      for (let r = 0; r < Math.min(15, matrix.length); r++) {
-        const row = matrix[r];
-        if (!row || !Array.isArray(row)) continue;
-        const joined = row.map(c => String(c || '').toLowerCase()).join(' | ');
+      // Tìm header row: dòng có nhiều từ khóa nhất
+      const HEADER_KEYWORDS = ['đơn hàng', 'mã đơn', 'order', 'sku', 'sản phẩm', 'product', 'hoa hồng', 'commission', 'gmv', 'số lượng', 'qty', 'giá', 'price', 'trạng thái', 'status', 'ngày', 'date', 'thực nhận', 'net', 'thuế', 'tax'];
+      let bestIdx = -1, bestScore = 0;
+      for (let r = 0; r < Math.min(20, matrix.length); r++) {
+        const joined = matrix[r].map(c => String(c || '').toLowerCase()).join(' | ');
         let score = 0;
-        HEADER_KEYWORDS.forEach(kw => {
-          if (joined.includes(kw)) score++;
-        });
-        if (score > bestScore) {
-          bestScore = score;
-          bestRowIndex = r;
-          bestRow = row;
-        }
+        HEADER_KEYWORDS.forEach(k => { if (joined.includes(k)) score++; });
+        if (score > bestScore) { bestScore = score; bestIdx = r; }
       }
 
-      if (bestRowIndex === -1 || bestScore < 3) {
-        // Không tìm được header → báo lỗi kèm debug rõ ràng
-        const preview = matrix.slice(0, 3).map(r => r.slice(0, 8).join(' | ')).join('\n');
-        throw new Error('Không tìm thấy dòng header (cần >= 3 từ khóa). 3 dòng đầu:\n' + preview);
+      console.log('[Header] Dòng tìm thấy:', bestIdx + 1, '| Score:', bestScore);
+      if (bestIdx === -1 || bestScore < 3) {
+        throw new Error('Không tìm thấy header. Score: ' + bestScore);
       }
 
-      const headerRowIndex = bestRowIndex;
-      const rawHeaders = bestRow;
+      const rawHeaders = matrix[bestIdx];
+      console.log('[Header] 10 cột đầu:', rawHeaders.slice(0, 10));
 
       const colMap = mapTikTokHeaders(rawHeaders);
-      const hasKeyCol = (
-        colMap.orderId !== undefined ||
-        colMap.productName !== undefined ||
-        colMap.skuId !== undefined ||
-        colMap.totalNetCommission !== undefined ||
-        colMap.standardCommission !== undefined
-      );
+      console.log('[ColMap] Kết quả:', colMap);
 
-      if (!hasKeyCol) {
-        throw new Error('Không nhận diện được cột. Headers: ' + JSON.stringify(rawHeaders.slice(0, 10)) + ' | colMap: ' + JSON.stringify(colMap));
+      if (colMap.orderId === undefined && colMap.productName === undefined) {
+        throw new Error('Không map được cột. colMap: ' + JSON.stringify(colMap));
       }
 
       updateProgress(65, 'Đang trích xuất đơn hàng và đối soát trùng lặp...');
 
       const parsedRows = [];
-      for (let r = headerRowIndex + 1; r < matrix.length; r++) {
+      for (let r = bestIdx + 1; r < matrix.length; r++) {
         const row = matrix[r];
         if (!row || row.length === 0) continue;
 
@@ -9078,12 +9080,12 @@ window.AffiliateModule = (function() {
       );
 
     } catch (err) {
-      console.error('[Affiliate Import Error]:', err);
+      console.error('[Import Error Full]:', err);
       if (progressDiv) progressDiv.classList.add('hidden');
-      alert('❌ Lỗi khi đọc file Excel TikTok Affiliate: ' + err.message);
+      alert('❌ Lỗi: ' + err.message + '\n\nHãy mở F12 → Console để xem log chi tiết.');
     } finally {
-      const fileInput = document.getElementById('tiktokFileInput');
-      if (fileInput) fileInput.value = '';
+      const fi = document.getElementById('tiktokFileInput');
+      if (fi) fi.value = '';
     }
   }
 
