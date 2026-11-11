@@ -2455,8 +2455,9 @@ body {
   background: rgba(99, 102, 241, 0.1);
 }
 
-/* --- MODAL CHỈNH SỬA --- */
-.modal-backdrop {
+/* --- MODAL CHỈNH SỬA & DIALOG CHUNG --- */
+.modal-backdrop,
+.modal {
   position: fixed;
   top: 0;
   left: 0;
@@ -2472,7 +2473,8 @@ body {
   overscroll-behavior: none;
 }
 
-.modal-backdrop.hidden {
+.modal-backdrop.hidden,
+.modal.hidden {
   display: none !important;
 }
 

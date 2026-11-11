@@ -172,6 +172,10 @@ function renderTaxChannelSelector(selectedChannels) {
   if (!container || !allCheckbox) return;
 
   const channels = getChannels();
+  // Đảm bảo kênh Affiliate luôn xuất hiện trong danh sách chọn của tờ khai thuế
+  if (!channels.some(c => c.toLowerCase() === 'affiliate')) {
+    channels.push('Affiliate');
+  }
 
   // Chuẩn hóa danh sách kênh đang chọn
   let currentList = [];
@@ -2310,6 +2314,11 @@ function setupTabNavigation() {
       // Bỏ kích hoạt ở các tab cũ
       navLinks.forEach(l => l.classList.remove("active"));
       panels.forEach(p => p.classList.remove("active"));
+
+      // Tự động đóng tất cả modal đang mở khi chuyển tab
+      document.querySelectorAll(".modal-backdrop:not(.hidden), .modal:not(.hidden)").forEach(m => {
+        m.classList.add("hidden");
+      });
 
       // Kích hoạt tab mới
       link.classList.add("active");
@@ -5672,8 +5681,20 @@ function getAffiliateTaxTransactions(reportPeriod) {
   return results.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 }
 
+// Helper kiểm tra xem kênh Affiliate có được chọn trong bộ lọc tờ khai thuế không
+function isAffiliateChannelSelected(salesChannels) {
+  if (!salesChannels) return true;
+  let chList = [];
+  if (Array.isArray(salesChannels)) {
+    chList = salesChannels;
+  } else if (typeof salesChannels === 'string') {
+    chList = salesChannels.split(',').map(s => s.trim().toLowerCase());
+  }
+  return chList.length === 0 || chList.includes('all') || chList.some(c => c.toLowerCase() === 'affiliate');
+}
+
 // Option 1 — Theo định kỳ: gom theo ngày (tách rõ dòng Doanh thu bán hàng, Doanh thu tiếp thị liên kết và dòng Giảm trừ hàng hoàn nếu có)
-function buildPeriodicTaxRows(txs, reportPeriod) {
+function buildPeriodicTaxRows(txs, reportPeriod, selectedChannels) {
   // Gom giao dịch theo ngày, tách tiền bán dương và tiền hoàn âm
   const txsByDate = {};
   txs.forEach(tx => {
@@ -5690,8 +5711,9 @@ function buildPeriodicTaxRows(txs, reportPeriod) {
     }
   });
 
-  // Gom doanh thu Affiliate theo ngày
-  const affTxs = getAffiliateTaxTransactions(reportPeriod);
+  // Gom doanh thu Affiliate theo ngày (chỉ khi kênh Affiliate được chọn)
+  const includeAff = isAffiliateChannelSelected(selectedChannels);
+  const affTxs = includeAff ? getAffiliateTaxTransactions(reportPeriod) : [];
   const affByDate = {};
   affTxs.forEach(a => {
     affByDate[a.date] = (affByDate[a.date] || 0) + a.amount;
@@ -5789,7 +5811,7 @@ function buildPeriodicTaxRows(txs, reportPeriod) {
 }
 
 // Option 2 — Theo từng lần phát sinh: mỗi giao dịch 1 dòng riêng, tách theo tháng, liệt kê đủ ngày
-function buildEachTransactionTaxRows(txs, reportPeriod) {
+function buildEachTransactionTaxRows(txs, reportPeriod, selectedChannels) {
   // Gom giao dịch theo ngày
   const txsByDate = {};
   txs.forEach(tx => {
@@ -5797,8 +5819,9 @@ function buildEachTransactionTaxRows(txs, reportPeriod) {
     txsByDate[tx.date].push(tx);
   });
 
-  // Gom giao dịch Affiliate theo ngày
-  const affTxs = getAffiliateTaxTransactions(reportPeriod);
+  // Gom giao dịch Affiliate theo ngày (chỉ khi kênh Affiliate được chọn)
+  const includeAff = isAffiliateChannelSelected(selectedChannels);
+  const affTxs = includeAff ? getAffiliateTaxTransactions(reportPeriod) : [];
   const affByDate = {};
   affTxs.forEach(a => {
     if (!affByDate[a.date]) affByDate[a.date] = [];
@@ -5892,9 +5915,10 @@ function buildEachTransactionTaxRows(txs, reportPeriod) {
 // Trả về mảng các trang tháng: [{ month, year, label, rows: [{date, description, amount}] }]
 function buildTaxRows(decl, txs) {
   const rp = decl.reportPeriod || {};
+  const channels = decl.salesChannels || decl.salesChannel || 'all';
   return decl.exportStyle === 'each'
-    ? buildEachTransactionTaxRows(txs, rp)
-    : buildPeriodicTaxRows(txs, rp);
+    ? buildEachTransactionTaxRows(txs, rp, channels)
+    : buildPeriodicTaxRows(txs, rp, channels);
 }
 
 // --- Tạo Payload S1a-HKD ---
@@ -8338,37 +8362,37 @@ window.AffiliateModule = (function() {
       if (!h) return;
       const clean = String(h).trim().toLowerCase();
 
-      if (clean.includes('id đơn hàng') || clean.includes('mã đơn hàng') || clean === 'order id' || clean === 'order_id') {
+      if (clean.includes('id đơn hàng') || clean.includes('mã đơn hàng') || clean.includes('mã đơn') || clean.includes('order id') || clean.includes('order_id') || clean.includes('order no') || clean.includes('order number') || clean === 'order') {
         map.orderId = idx;
-      } else if (clean.includes('id sku') || clean.includes('sku id') || clean === 'sku_id') {
+      } else if (clean.includes('id sku') || clean.includes('sku id') || clean.includes('mã sku') || clean === 'sku' || clean === 'sku_id') {
         map.skuId = idx;
-      } else if (clean.includes('id sản phẩm') || clean.includes('mã sản phẩm') || clean === 'product id') {
+      } else if (clean.includes('id sản phẩm') || clean.includes('mã sản phẩm') || clean.includes('product id') || clean.includes('mã hàng') || clean === 'item_id') {
         map.productId = idx;
-      } else if (clean.includes('tên sản phẩm') || clean === 'product name') {
+      } else if (clean.includes('tên sản phẩm') || clean.includes('tên hàng') || clean.includes('tên mặt hàng') || clean.includes('product name') || clean.includes('product title') || clean.includes('item name') || clean.includes('title') || clean === 'tên') {
         map.productName = idx;
-      } else if (clean === 'giá' || clean === 'đơn giá' || clean === 'price' || clean.includes('giá sản phẩm')) {
+      } else if (clean === 'giá' || clean === 'đơn giá' || clean === 'price' || clean.includes('giá sản phẩm') || clean.includes('unit price')) {
         map.unitPrice = idx;
-      } else if (clean.includes('bán ra') || clean.includes('số món bán') || clean.includes('items sold')) {
+      } else if (clean.includes('bán ra') || clean.includes('số món bán') || clean.includes('items sold') || clean.includes('sold qty') || clean.includes('qty sold') || clean.includes('số lượng') || clean === 'qty') {
         map.soldQty = idx;
-      } else if (clean.includes('hoàn tiền') || clean.includes('refunded')) {
+      } else if (clean.includes('hoàn tiền') || clean.includes('refunded') || clean.includes('refund qty') || clean.includes('số món hoàn')) {
         map.refundQty = idx;
-      } else if (clean.includes('tên cửa hàng') || clean.includes('tên shop') || clean === 'shop name') {
+      } else if (clean.includes('tên cửa hàng') || clean.includes('tên shop') || clean === 'shop name' || clean.includes('cửa hàng') || clean.includes('creator') || clean.includes('người bán')) {
         map.shopName = idx;
-      } else if (clean.includes('loại đơn hàng') || clean === 'order type') {
+      } else if (clean.includes('loại đơn hàng') || clean.includes('loại đơn') || clean === 'order type') {
         map.orderType = idx;
-      } else if (clean.includes('trạng thái quyết toán') || clean.includes('settlement status')) {
+      } else if (clean.includes('trạng thái quyết toán') || clean.includes('settlement status') || clean.includes('trạng thái') || clean === 'status') {
         map.settlementStatus = idx;
       } else if (clean.includes('loại nội dung') || clean === 'content type') {
         map.contentType = idx;
       } else if (clean.includes('id nội dung') || clean === 'content id') {
         map.contentId = idx;
-      } else if (clean.includes('ngày đặt') || clean.includes('thời gian đặt') || clean === 'order time' || clean === 'order date') {
+      } else if (clean.includes('ngày đặt') || clean.includes('thời gian đặt') || clean === 'order time' || clean === 'order date' || clean.includes('create time') || clean.includes('created')) {
         map.orderDate = idx;
-      } else if (clean.includes('ngày quyết toán') || clean.includes('thời gian quyết toán') || clean.includes('settlement time') || clean.includes('settlement date')) {
+      } else if (clean.includes('ngày quyết toán') || clean.includes('thời gian quyết toán') || clean.includes('settlement time') || clean.includes('settlement date') || clean.includes('settled')) {
         map.settlementDate = idx;
-      } else if (clean === 'gmv' || clean.includes('tổng gmv')) {
+      } else if (clean === 'gmv' || clean.includes('tổng gmv') || clean.includes('tổng tiền hàng') || clean.includes('turnover')) {
         map.gmv = idx;
-      } else if (clean.includes('cơ sở hoa hồng thực tế') || clean.includes('actual commission base')) {
+      } else if (clean.includes('cơ sở hoa hồng thực tế') || clean.includes('cơ sở hoa hồng') || clean.includes('actual commission base') || clean.includes('commission base')) {
         map.actualCommissionBase = idx;
       } else if ((clean.includes('hoa hồng tiêu chuẩn') || clean.includes('standard commission')) && !clean.includes('ước tính') && !clean.includes('estimated')) {
         map.standardCommission = idx;
@@ -8384,7 +8408,7 @@ window.AffiliateModule = (function() {
         map.taxIVA = idx;
       } else if (clean.includes('pit')) {
         map.taxPIT = idx;
-      } else if (clean.includes('tổng số tiền nhận được cuối cùng') || clean.includes('số tiền nhận được cuối cùng') || clean.includes('thực nhận') || clean.includes('final commission')) {
+      } else if (clean.includes('tổng số tiền nhận được cuối cùng') || clean.includes('số tiền nhận được cuối cùng') || clean.includes('thực nhận') || clean.includes('tiền nhận') || clean.includes('final commission') || clean.includes('net commission') || clean.includes('hoa hồng thực tế') || clean.includes('hoa hồng nhận được') || clean.includes('tiền hoa hồng')) {
         map.totalNetCommission = idx;
       }
     });
@@ -8413,7 +8437,8 @@ window.AffiliateModule = (function() {
   // --- Xử lý tải và phân tích file TikTok XLSX ---
   async function handleFile(file) {
     if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.xlsx')) {
+    const fileNameLower = (file.name || '').toLowerCase();
+    if (!fileNameLower.endsWith('.xlsx') && !fileNameLower.endsWith('.xls')) {
       alert('⚠️ Vui lòng chọn file định dạng .xlsx của TikTok Shop Affiliate.');
       return;
     }
@@ -8449,22 +8474,86 @@ window.AffiliateModule = (function() {
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(arrayBuffer);
 
-      // Tìm sheet chứa dữ liệu (ưu tiên "Sheet1" hoặc sheet đầu tiên)
-      let sheet = workbook.getWorksheet('Sheet1') || workbook.worksheets[0];
-      if (!sheet || sheet.rowCount < 2) {
-        throw new Error('File không có dữ liệu hoặc không tìm thấy sheet hợp lệ.');
+      // Helper lấy số dòng thực tế an toàn của sheet trong ExcelJS
+      const getSheetTotalRows = (ws) => {
+        if (!ws) return 0;
+        let count = 0;
+        if (typeof ws.actualRowCount === 'number' && ws.actualRowCount > 0) {
+          count = Math.max(count, ws.actualRowCount);
+        }
+        if (typeof ws.rowCount === 'number' && ws.rowCount > 0) {
+          count = Math.max(count, ws.rowCount);
+        }
+        if (ws.lastRow && typeof ws.lastRow.number === 'number') {
+          count = Math.max(count, ws.lastRow.number);
+        }
+        if (count === 0 && typeof ws.eachRow === 'function') {
+          ws.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+            if (rowNumber > count) count = rowNumber;
+          });
+        }
+        return count;
+      };
+
+      // Tìm sheet chứa dữ liệu TikTok Affiliate:
+      const worksheets = workbook.worksheets || [];
+      let sheet = null;
+
+      // 1. Quét tìm sheet có dòng chứa từ khóa TikTok Affiliate
+      for (const ws of worksheets) {
+        const rc = getSheetTotalRows(ws);
+        if (rc > 0) {
+          for (let r = 1; r <= Math.min(10, rc); r++) {
+            const rowVals = [];
+            ws.getRow(r).eachCell({ includeEmpty: true }, (cell) => {
+              if (cell && cell.value !== null && cell.value !== undefined) {
+                rowVals.push(String(cell.value).toLowerCase());
+              }
+            });
+            const text = rowVals.join(' ');
+            if (text.includes('đơn hàng') || text.includes('sku') || text.includes('hoa hồng') || text.includes('order') || text.includes('gmv') || text.includes('commission')) {
+              sheet = ws;
+              break;
+            }
+          }
+          if (sheet) break;
+        }
       }
 
-      // Đọc dòng tiêu đề (quét 5 dòng đầu tìm dòng có tiêu đề 'đơn hàng' hoặc 'sku')
+      // 2. Nếu chưa tìm thấy, ưu tiên sheet có tên 'sheet1' (không phân biệt hoa thường)
+      if (!sheet) {
+        sheet = worksheets.find(ws => (ws.name || '').trim().toLowerCase() === 'sheet1');
+      }
+
+      // 3. Nếu vẫn chưa có, lấy sheet đầu tiên có ít nhất 1 dòng
+      if (!sheet) {
+        sheet = worksheets.find(ws => getSheetTotalRows(ws) > 0);
+      }
+
+      // 4. Fallback cuối cùng
+      if (!sheet && worksheets.length > 0) {
+        sheet = worksheets[0];
+      }
+
+      if (!sheet) {
+        throw new Error('Không tìm thấy bất kỳ trang tính (sheet) nào trong file Excel đã chọn.');
+      }
+
+      const totalRows = getSheetTotalRows(sheet);
+      if (totalRows === 0) {
+        throw new Error('Trang tính trong file Excel hoàn toàn trống (không có dữ liệu).');
+      }
+
+      // Đọc dòng tiêu đề (quét tối đa 10 dòng đầu tìm dòng tiêu đề)
       let headerRowIndex = 1;
       let rawHeaders = [];
-      for (let r = 1; r <= Math.min(5, sheet.rowCount); r++) {
+      for (let r = 1; r <= Math.min(10, totalRows); r++) {
         const rowVals = [];
         sheet.getRow(r).eachCell({ includeEmpty: true }, (cell, colNumber) => {
-          rowVals[colNumber] = cell.value ? String(cell.value).trim() : '';
+          rowVals[colNumber] = (cell && cell.value !== null && cell.value !== undefined) ? String(cell.value).trim() : '';
         });
         const joined = rowVals.join(' ').toLowerCase();
-        if (joined.includes('đơn hàng') || joined.includes('sku') || joined.includes('hoa hồng') || joined.includes('order')) {
+        if (joined.includes('đơn hàng') || joined.includes('sku') || joined.includes('hoa hồng') || joined.includes('order') || joined.includes('gmv') || joined.includes('commission')) {
           headerRowIndex = r;
           rawHeaders = rowVals;
           break;
@@ -8473,20 +8562,21 @@ window.AffiliateModule = (function() {
 
       if (rawHeaders.length === 0) {
         sheet.getRow(1).eachCell({ includeEmpty: true }, (cell, colNumber) => {
-          rawHeaders[colNumber] = cell.value ? String(cell.value).trim() : '';
+          rawHeaders[colNumber] = (cell && cell.value !== null && cell.value !== undefined) ? String(cell.value).trim() : '';
         });
       }
 
       const colMap = mapTikTokHeaders(rawHeaders);
-      if (!colMap.orderId && !colMap.productName) {
-        throw new Error('Không nhận diện được các cột bắt buộc của TikTok Affiliate (Mã đơn hàng, Tên sản phẩm, Hoa hồng...).');
+      if (!colMap.orderId && !colMap.productName && !colMap.skuId && !colMap.totalNetCommission && !colMap.standardCommission) {
+        throw new Error('Không nhận diện được các cột dữ liệu TikTok Affiliate (Mã đơn hàng, Tên sản phẩm, Hoa hồng...). Vui lòng kiểm tra lại file báo cáo gốc.');
       }
 
       updateProgress(65, 'Đang trích xuất đơn hàng và đối soát trùng lặp...');
 
       const parsedRows = [];
-      for (let r = headerRowIndex + 1; r <= sheet.rowCount; r++) {
+      for (let r = headerRowIndex + 1; r <= totalRows; r++) {
         const row = sheet.getRow(r);
+        if (!row) continue;
         const getVal = (colIdx) => {
           if (!colIdx) return null;
           const cell = row.getCell(colIdx);
@@ -8495,10 +8585,11 @@ window.AffiliateModule = (function() {
 
         const orderId = String(getVal(colMap.orderId) || '').trim();
         const productName = String(getVal(colMap.productName) || '').trim();
-        if (!orderId && !productName) continue; // Bỏ qua dòng trống
-
         const skuId = String(getVal(colMap.skuId) || '').trim();
         const productId = String(getVal(colMap.productId) || '').trim();
+
+        // Bỏ qua dòng trống
+        if (!orderId && !productName && !skuId) continue;
 
         // Thu thập các trường quan trọng (ưu tiên số liệu thực tế)
         const item = {

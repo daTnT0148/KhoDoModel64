@@ -1967,14 +1967,13 @@
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <!-- MODAL: NHẬP HOA HỒNG AFFILIATE THỦ CÔNG                             -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
-  <div class="modal hidden" id="affiliateManualModal" role="dialog" aria-modal="true">
-    <div class="modal-overlay" onclick="closeAffiliateManualModal()"></div>
-    <div class="modal-card form-card" style="max-width:560px; width:95%; max-height:90vh; overflow-y:auto;">
-      <div class="form-header" style="display:flex; justify-content:space-between; align-items:center;">
+  <div class="modal-backdrop hidden" id="affiliateManualModal" onclick="if(event.target===this)closeAffiliateManualModal()">
+    <div class="modal-card" style="max-width:560px; width:95%; max-height:90vh; overflow-y:auto;">
+      <div class="modal-header">
         <h3 id="affManualModalTitle"><i data-lucide="edit-3"></i> Nhập hoa hồng Affiliate thủ công</h3>
-        <button type="button" class="close-btn" onclick="closeAffiliateManualModal()" title="Đóng">&times;</button>
+        <button type="button" class="modal-close-btn" onclick="closeAffiliateManualModal()" title="Đóng">&times;</button>
       </div>
-      <form id="affiliateManualForm" class="styled-form" style="margin-top:16px;">
+      <form id="affiliateManualForm" class="styled-form" style="padding:20px;">
         <input type="hidden" id="affManualId">
         <div class="form-group">
           <label for="affManualPlatform">Nền tảng tiếp thị <span class="required">*</span></label>
@@ -2049,14 +2048,13 @@
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <!-- MODAL: LỊCH SỬ FILE EXCEL ĐÃ NHẬP                                   -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
-  <div class="modal hidden" id="affiliateHistoryModal" role="dialog" aria-modal="true">
-    <div class="modal-overlay" onclick="closeAffiliateHistoryModal()"></div>
-    <div class="modal-card" style="max-width:700px; width:95%; max-height:85vh; overflow-y:auto;">
-      <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center;">
+  <div class="modal-backdrop hidden" id="affiliateHistoryModal" onclick="if(event.target===this)closeAffiliateHistoryModal()">
+    <div class="modal-card modal-card-large" style="max-height:85vh; overflow-y:auto;">
+      <div class="modal-header">
         <h3><i data-lucide="history"></i> Lịch sử file Excel đã tải lên</h3>
-        <button type="button" class="close-btn" onclick="closeAffiliateHistoryModal()" title="Đóng">&times;</button>
+        <button type="button" class="modal-close-btn" onclick="closeAffiliateHistoryModal()" title="Đóng">&times;</button>
       </div>
-      <div style="margin-top:16px;">
+      <div style="padding:20px;">
         <table class="affiliate-table" id="affiliateHistoryTable">
           <thead>
             <tr>
@@ -2083,14 +2081,13 @@
   <!-- ═══════════════════════════════════════════════════════════════════ -->
   <!-- MODAL: CHI TIẾT ĐƠN HÀNG AFFILIATE                                  -->
   <!-- ═══════════════════════════════════════════════════════════════════ -->
-  <div class="modal hidden" id="affiliateDetailModal" role="dialog" aria-modal="true">
-    <div class="modal-overlay" onclick="closeAffiliateDetailModal()"></div>
-    <div class="modal-card" style="max-width:620px; width:95%; max-height:90vh; overflow-y:auto;">
-      <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center;">
+  <div class="modal-backdrop hidden" id="affiliateDetailModal" onclick="if(event.target===this)closeAffiliateDetailModal()">
+    <div class="modal-card" style="max-width:640px; width:95%; max-height:90vh; overflow-y:auto;">
+      <div class="modal-header">
         <h3><i data-lucide="file-text"></i> Chi tiết đơn hàng Affiliate</h3>
-        <button type="button" class="close-btn" onclick="closeAffiliateDetailModal()" title="Đóng">&times;</button>
+        <button type="button" class="modal-close-btn" onclick="closeAffiliateDetailModal()" title="Đóng">&times;</button>
       </div>
-      <div id="affiliateDetailBody" style="margin-top:16px;">
+      <div id="affiliateDetailBody" style="padding:20px;">
         <!-- Rendered dynamically -->
       </div>
     </div>
