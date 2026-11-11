@@ -4768,3 +4768,111 @@ img {
 }
 
 /* ===== END TRACKING MODULE ===== */
+
+/* ===== TAX DECLARATION CHANNEL CHECKBOX SELECTOR ===== */
+.tax-channel-container {
+  background: #0f1524;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: var(--border-radius-sm);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tax-channel-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 2px 0;
+}
+
+.tax-channel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+}
+
+.tax-channel-cb-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  min-height: 44px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.2s ease;
+}
+
+.tax-channel-cb-item:hover {
+  background: rgba(99, 102, 241, 0.08);
+  border-color: rgba(99, 102, 241, 0.3);
+}
+
+.tax-channel-all-item {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  font-weight: 600;
+}
+
+.tax-channel-cb-item input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.tax-custom-checkbox {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  border: 1.5px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.04);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.tax-channel-cb-item:hover .tax-custom-checkbox {
+  border-color: var(--primary);
+}
+
+.tax-channel-cb-item input[type="checkbox"]:checked + .tax-custom-checkbox {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.tax-channel-cb-item input[type="checkbox"]:checked + .tax-custom-checkbox::after {
+  content: "";
+  position: absolute;
+  width: 5px;
+  height: 9px;
+  border: solid #ffffff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  top: 2px;
+}
+
+.tax-channel-cb-item input[type="checkbox"]:checked ~ .tax-channel-name {
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.tax-channel-name {
+  font-size: 13.5px;
+  color: #cbd5e1;
+  letter-spacing: 0.1px;
+}
+
+@media (max-width: 640px) {
+  .tax-channel-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+

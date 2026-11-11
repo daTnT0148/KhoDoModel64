@@ -75,12 +75,24 @@ let charts = {
 
 // --- KÊNH BÁN HÀNG: Quản lý kênh tùy chỉnh ---
 
-const BUILTIN_CHANNELS = ["Shopee", "Facebook", "Trực tiếp"];
+const BUILTIN_CHANNELS = ["Shopee", "TikTok", "Facebook", "Trực tiếp"];
 const LS_CUSTOM_CHANNELS_KEY = "khoDoCustomChannels";
 
-// Trả về danh sách tất cả kênh (built-in + tùy chỉnh)
+// Trả về danh sách tất cả kênh (built-in + tùy chỉnh + kênh từng phát sinh giao dịch)
 function getChannels() {
-  return [...BUILTIN_CHANNELS, ...(state.customChannels || [])];
+  const set = new Set([...BUILTIN_CHANNELS, ...(state.customChannels || [])]);
+  if (state.transactions) {
+    Object.values(state.transactions).forEach(txList => {
+      if (Array.isArray(txList)) {
+        txList.forEach(tx => {
+          if (tx && tx.channel && typeof tx.channel === 'string' && tx.channel.trim()) {
+            set.add(tx.channel.trim());
+          }
+        });
+      }
+    });
+  }
+  return Array.from(set);
 }
 
 // Load kênh tùy chỉnh từ localStorage vào state
@@ -139,21 +151,107 @@ function populateChannelSelects(selectedValue) {
     }
   });
 
-  // Populate dropdown lọc kênh ở tab Thuế (taxDetailChannel) — có thêm option "Tất cả"
-  const taxEl = document.getElementById("taxDetailChannel");
-  if (taxEl) {
-    const currentTax = taxEl.value;
-    taxEl.innerHTML = `<option value="all">Tất cả kênh bán hàng</option>`;
-    channels.forEach(ch => {
-      const opt = document.createElement("option");
-      opt.value = ch;
-      opt.textContent = ch;
-      taxEl.appendChild(opt);
-    });
-    if (currentTax && (currentTax === "all" || channels.includes(currentTax))) {
-      taxEl.value = currentTax;
-    }
+  // Cập nhật bộ chọn checkbox kênh bán hàng ở tab Thuế
+  if (document.getElementById("taxChannelGrid")) {
+    const currentTaxChannels = getSelectedTaxChannels();
+    renderTaxChannelSelector(currentTaxChannels);
   }
+}
+
+// Render và khởi tạo bộ chọn checkbox đa kênh trong tờ khai thuế
+function renderTaxChannelSelector(selectedChannels) {
+  const container = document.getElementById("taxChannelGrid");
+  const allCheckbox = document.getElementById("taxChannelAll");
+  const hiddenInput = document.getElementById("taxDetailChannel");
+  if (!container || !allCheckbox) return;
+
+  const channels = getChannels();
+
+  // Chuẩn hóa danh sách kênh đang chọn
+  let currentList = [];
+  if (Array.isArray(selectedChannels)) {
+    currentList = selectedChannels;
+  } else if (typeof selectedChannels === 'string' && selectedChannels && selectedChannels !== 'all') {
+    currentList = selectedChannels.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  const isAll = currentList.length === 0 || currentList.includes('all');
+
+  allCheckbox.checked = isAll;
+
+  container.innerHTML = channels.map(ch => {
+    const isChecked = !isAll && currentList.includes(ch);
+    const safeCh = ch.replace(/"/g, '&quot;');
+    return `
+      <label class="tax-channel-cb-item" for="taxCb_${safeCh}">
+        <input type="checkbox" id="taxCb_${safeCh}" class="tax-channel-item-cb" value="${safeCh}" ${isChecked ? 'checked' : ''}>
+        <span class="tax-custom-checkbox"></span>
+        <span class="tax-channel-name">${ch}</span>
+      </label>
+    `;
+  }).join('');
+
+  const syncHiddenAndDecl = () => {
+    const checkedBoxes = Array.from(container.querySelectorAll('.tax-channel-item-cb:checked'));
+    const isAllChecked = allCheckbox.checked;
+    let resultList = [];
+    if (isAllChecked || checkedBoxes.length === 0) {
+      resultList = ['all'];
+      if (hiddenInput) hiddenInput.value = 'all';
+    } else {
+      resultList = checkedBoxes.map(cb => cb.value);
+      if (hiddenInput) hiddenInput.value = resultList.join(', ');
+    }
+
+    if (typeof _activeTaxDeclarationId !== 'undefined' && _activeTaxDeclarationId) {
+      const decl = ((state.tax && state.tax.declarations) || []).find(d => d.id === _activeTaxDeclarationId);
+      if (decl) {
+        decl.salesChannels = resultList;
+        decl.salesChannel = resultList.includes('all') ? 'all' : resultList.join(', ');
+        saveStateToLocalStorage();
+      }
+    }
+    return resultList;
+  };
+
+  // Listener cho "Tất cả kênh bán hàng"
+  allCheckbox.onchange = function () {
+    if (this.checked) {
+      container.querySelectorAll('.tax-channel-item-cb').forEach(cb => { cb.checked = false; });
+    } else {
+      const checkedBoxes = container.querySelectorAll('.tax-channel-item-cb:checked');
+      if (checkedBoxes.length === 0) {
+        this.checked = true;
+      }
+    }
+    syncHiddenAndDecl();
+  };
+
+  // Listener cho từng checkbox kênh
+  container.querySelectorAll('.tax-channel-item-cb').forEach(cb => {
+    cb.onchange = function () {
+      const anyChecked = container.querySelectorAll('.tax-channel-item-cb:checked').length > 0;
+      if (anyChecked) {
+        allCheckbox.checked = false;
+      } else {
+        allCheckbox.checked = true;
+      }
+      syncHiddenAndDecl();
+    };
+  });
+
+  syncHiddenAndDecl();
+}
+
+// Lấy danh sách các kênh bán hàng đang được chọn trong tờ khai
+function getSelectedTaxChannels() {
+  const allCheckbox = document.getElementById("taxChannelAll");
+  const container = document.getElementById("taxChannelGrid");
+  if (allCheckbox && allCheckbox.checked) return ['all'];
+  if (container) {
+    const checked = Array.from(container.querySelectorAll('.tax-channel-item-cb:checked')).map(cb => cb.value);
+    if (checked.length > 0) return checked;
+  }
+  return ['all'];
 }
 
 // Gắn listener xử lý khi chọn "+ Thêm kênh mới..." cho 1 select cụ thể
@@ -5411,7 +5509,11 @@ function openTaxDeclarationDetail(id) {
   document.getElementById('taxDetailBadge').innerHTML =
     `<span class="badge" style="background:rgba(99,102,241,0.15);color:#a5b4fc;font-size:12px;padding:4px 12px;">${decl.id}</span>`;
   document.getElementById('taxDetailNote').value = decl.note || '';
-  document.getElementById('taxDetailChannel').value = decl.salesChannel || 'all';
+  
+  // Khởi tạo bộ chọn kênh bán hàng (checkbox)
+  const initialChannels = decl.salesChannels || decl.salesChannel || 'all';
+  renderTaxChannelSelector(initialChannels);
+
   document.getElementById('taxDetailPeriodError').style.display = 'none';
 
   // Cách ghi sổ: mặc định "periodic" (giữ nguyên hành vi cũ) nếu chưa từng chọn
@@ -5454,8 +5556,18 @@ function closeTaxDeclarationDetail() {
 // Đơn hoàn (return_sell) được tính là 1 khoản GIẢM TRỪ doanh thu, ghi nhận vào KỲ XẢY RA TRẢ HÀNG
 // (không lùi về sửa kỳ đã khai của đơn bán gốc — vì kỳ đó có thể đã nộp tờ khai rồi).
 // Trả hàng nhập (return_buy) không liên quan tới doanh thu bán ra nên KHÔNG đưa vào tờ khai này.
-function getFilteredSalesTransactions(reportFrom, reportTo, salesChannel) {
+function getFilteredSalesTransactions(reportFrom, reportTo, salesChannels) {
   const txs = state.transactions[state.activePortfolioId] || [];
+  
+  // Chuẩn hóa salesChannels
+  let channelList = [];
+  if (Array.isArray(salesChannels)) {
+    channelList = salesChannels;
+  } else if (typeof salesChannels === 'string' && salesChannels && salesChannels !== 'all') {
+    channelList = salesChannels.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  const isAll = channelList.length === 0 || channelList.includes('all');
+
   return txs.filter(tx => {
     if (tx.type !== 'sell' && tx.type !== 'return_sell') return false;
     
@@ -5463,8 +5575,8 @@ function getFilteredSalesTransactions(reportFrom, reportTo, salesChannel) {
       if (tx.date < reportFrom || tx.date > reportTo) return false;
     }
     
-    if (salesChannel && salesChannel !== 'all') {
-      if (tx.channel !== salesChannel) return false;
+    if (!isAll) {
+      if (!channelList.includes(tx.channel)) return false;
     }
     
     return true;
@@ -5749,13 +5861,17 @@ function previewTaxDeclaration() {
   // Lưu lại các thông số cấu hình đã nhập vào state
   decl.reportPeriod.from = fromVal || '';
   decl.reportPeriod.to   = toVal   || '';
-  decl.salesChannel = document.getElementById('taxDetailChannel').value;
+  const selectedChannels = getSelectedTaxChannels();
+  decl.salesChannels = selectedChannels;
+  decl.salesChannel  = selectedChannels.includes('all') ? 'all' : selectedChannels.join(', ');
+  const hiddenChannelEl = document.getElementById('taxDetailChannel');
+  if (hiddenChannelEl) hiddenChannelEl.value = decl.salesChannel;
   decl.note         = document.getElementById('taxDetailNote').value.trim();
   decl.exportStyle  = document.getElementById('taxExportStyle').value; // "periodic" | "each"
   saveStateToLocalStorage();
 
   // Bắt đầu trích xuất dữ liệu để build preview
-  const txs = getFilteredSalesTransactions(decl.reportPeriod.from, decl.reportPeriod.to, decl.salesChannel);
+  const txs = getFilteredSalesTransactions(decl.reportPeriod.from, decl.reportPeriod.to, decl.salesChannels || decl.salesChannel);
   const taxInfo = state.tax.info;
   
   const printArea = document.getElementById('taxPrintArea');
@@ -6038,7 +6154,7 @@ async function downloadTaxExcel() {
   }
 
   try {
-    const txs = getFilteredSalesTransactions(decl.reportPeriod.from, decl.reportPeriod.to, decl.salesChannel);
+    const txs = getFilteredSalesTransactions(decl.reportPeriod.from, decl.reportPeriod.to, decl.salesChannels || decl.salesChannel);
     const workbook = await generateTaxExcelWorkbook(decl, txs, info);
 
     const excelBuffer = await workbook.xlsx.writeBuffer();
@@ -6140,7 +6256,7 @@ async function downloadTaxZip() {
     const printArea = document.getElementById('taxPrintArea');
     if (!printArea) throw new Error("Không tìm thấy dữ liệu tờ khai.");
 
-    const txs = getFilteredSalesTransactions(decl.reportPeriod.from, decl.reportPeriod.to, decl.salesChannel);
+    const txs = getFilteredSalesTransactions(decl.reportPeriod.from, decl.reportPeriod.to, decl.salesChannels || decl.salesChannel);
     const workbook = await generateTaxExcelWorkbook(decl, txs, info);
     const excelBuffer = await workbook.xlsx.writeBuffer();
 

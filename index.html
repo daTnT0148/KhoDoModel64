@@ -1469,10 +1469,19 @@
                 </div>
                 <p id="taxDetailPeriodError" style="color:var(--danger);font-size:12px;display:none;">⚠ Kỳ báo cáo không được vượt quá 1 năm.</p>
                 <div class="form-group">
-                  <label for="taxDetailChannel">Kênh bán hàng</label>
-                  <select id="taxDetailChannel" class="styled-form">
-                    <!-- Các option được tạo động bởi populateChannelSelects() trong app.js -->
-                  </select>
+                  <label>Kênh bán hàng</label>
+                  <div class="tax-channel-container" id="taxChannelContainer">
+                    <label class="tax-channel-cb-item tax-channel-all-item" for="taxChannelAll">
+                      <input type="checkbox" id="taxChannelAll" value="all" checked>
+                      <span class="tax-custom-checkbox"></span>
+                      <span class="tax-channel-name">Tất cả kênh bán hàng</span>
+                    </label>
+                    <div class="tax-channel-divider"></div>
+                    <div class="tax-channel-grid" id="taxChannelGrid">
+                      <!-- Render động các kênh bán hàng (Shopee, TikTok, Facebook, Trực tiếp...) -->
+                    </div>
+                  </div>
+                  <input type="hidden" id="taxDetailChannel" value="all">
                 </div>
                 <div class="form-group">
                   <label for="taxExportStyle">Cách ghi sổ</label>
