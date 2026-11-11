@@ -8364,6 +8364,238 @@ window.AffiliateModule = (function() {
   // --- Header mapping cho TikTok XLSX ---
   function mapTikTokHeaders(headers) {
     const map = {};
+    if (!Array.isArray(headers)) return map;
+
+    // Danh sách quy tắc định nghĩa cột theo thứ tự ưu tiên (từ khóa dài / cụ thể trước)
+    const FIELD_RULES = [
+      {
+        key: 'totalNetCommission',
+        patterns: [
+          'tổng số tiền nhận được cuối cùng',
+          'số tiền nhận được cuối cùng',
+          'tổng số tiền nhận được',
+          'tổng tiền nhận được',
+          'số tiền nhận được',
+          'tiền nhận cuối cùng',
+          'thực nhận',
+          'final commission',
+          'net commission',
+          'hoa hồng nhận được'
+        ]
+      },
+      {
+        key: 'actualCommissionBase',
+        patterns: [
+          'cơ sở hoa hồng thực tế',
+          'cơ sở hoa hồng',
+          'actual commission base',
+          'commission base'
+        ]
+      },
+      {
+        key: 'standardCommission',
+        patterns: [
+          'hoa hồng tiêu chuẩn',
+          'standard commission'
+        ]
+      },
+      {
+        key: 'shopAdsCommission',
+        patterns: [
+          'hoa hồng quảng cáo cửa hàng',
+          'hoa hồng quảng cáo',
+          'shop ads commission'
+        ]
+      },
+      {
+        key: 'partnerBonus',
+        patterns: [
+          'thưởng của đối tác liên kết',
+          'thưởng đối tác',
+          'partner bonus'
+        ]
+      },
+      {
+        key: 'bonus',
+        patterns: [
+          'tiền thưởng',
+          'thưởng',
+          'tiktok thưởng'
+        ]
+      },
+      {
+        key: 'orderId',
+        patterns: [
+          'id đơn hàng',
+          'mã đơn hàng',
+          'mã đơn',
+          'order id',
+          'order_id',
+          'order no',
+          'order number'
+        ]
+      },
+      {
+        key: 'skuId',
+        patterns: [
+          'id sku',
+          'mã sku',
+          'sku id',
+          'sku_id'
+        ]
+      },
+      {
+        key: 'productId',
+        patterns: [
+          'id sản phẩm',
+          'mã sản phẩm',
+          'product id',
+          'item id',
+          'item_id'
+        ]
+      },
+      {
+        key: 'productName',
+        patterns: [
+          'tên sản phẩm',
+          'tên hàng',
+          'tên mặt hàng',
+          'product name',
+          'product title',
+          'item name'
+        ]
+      },
+      {
+        key: 'unitPrice',
+        patterns: [
+          'giá sản phẩm',
+          'đơn giá',
+          'unit price',
+          'giá',
+          'price'
+        ]
+      },
+      {
+        key: 'soldQty',
+        patterns: [
+          'số món bán ra',
+          'số món bán',
+          'số lượng bán',
+          'items sold',
+          'sold qty',
+          'qty sold'
+        ]
+      },
+      {
+        key: 'refundQty',
+        patterns: [
+          'số món đã hoàn tiền',
+          'số món hoàn tiền',
+          'số món hoàn',
+          'hoàn tiền',
+          'refund qty',
+          'refunded'
+        ]
+      },
+      {
+        key: 'shopName',
+        patterns: [
+          'tên cửa hàng',
+          'tên shop',
+          'shop name',
+          'cửa hàng'
+        ]
+      },
+      {
+        key: 'orderType',
+        patterns: [
+          'loại đơn hàng',
+          'loại đơn',
+          'order type'
+        ]
+      },
+      {
+        key: 'settlementStatus',
+        patterns: [
+          'trạng thái quyết toán đơn hàng',
+          'trạng thái quyết toán',
+          'settlement status'
+        ]
+      },
+      {
+        key: 'contentType',
+        patterns: [
+          'loại nội dung',
+          'content type'
+        ]
+      },
+      {
+        key: 'contentId',
+        patterns: [
+          'id nội dung',
+          'mã nội dung',
+          'content id'
+        ]
+      },
+      {
+        key: 'orderDate',
+        patterns: [
+          'ngày đặt hàng',
+          'thời gian đặt hàng',
+          'ngày đặt',
+          'thời gian đặt',
+          'order date',
+          'order time',
+          'create time',
+          'created time'
+        ]
+      },
+      {
+        key: 'settlementDate',
+        patterns: [
+          'ngày quyết toán hoa hồng',
+          'thời gian quyết toán hoa hồng',
+          'ngày quyết toán',
+          'thời gian quyết toán',
+          'settlement date',
+          'settlement time'
+        ]
+      },
+      {
+        key: 'gmv',
+        patterns: [
+          'tổng gmv',
+          'tổng tiền hàng',
+          'gmv',
+          'turnover'
+        ]
+      },
+      {
+        key: 'taxPIT',
+        patterns: [
+          'thuế - pit',
+          'thuế pit',
+          'pit'
+        ]
+      },
+      {
+        key: 'taxISR',
+        patterns: [
+          'thuế - isr',
+          'thuế isr',
+          'isr'
+        ]
+      },
+      {
+        key: 'taxIVA',
+        patterns: [
+          'thuế - iva',
+          'thuế iva',
+          'iva'
+        ]
+      }
+    ];
+
     headers.forEach((h, idx) => {
       if (h === undefined || h === null) return;
       const clean = String(h)
@@ -8373,56 +8605,28 @@ window.AffiliateModule = (function() {
         .toLowerCase();
       if (!clean) return;
 
-      if (clean.includes('id đơn hàng') || clean.includes('mã đơn hàng') || clean.includes('mã đơn') || clean.includes('order id') || clean.includes('order_id') || clean.includes('order no') || clean.includes('order number') || clean === 'order' || clean === 'đơn hàng') {
-        if (map.orderId === undefined || clean.includes('id') || clean.includes('mã')) map.orderId = idx;
-      } else if (clean.includes('id sku') || clean.includes('sku id') || clean.includes('mã sku') || clean === 'sku' || clean === 'sku_id') {
-        map.skuId = idx;
-      } else if (clean.includes('id sản phẩm') || clean.includes('mã sản phẩm') || clean.includes('product id') || clean.includes('mã hàng') || clean === 'item_id') {
-        map.productId = idx;
-      } else if (clean.includes('tên sản phẩm') || clean.includes('tên hàng') || clean.includes('tên mặt hàng') || clean.includes('product name') || clean.includes('product title') || clean.includes('item name') || clean.includes('title') || clean === 'tên') {
-        map.productName = idx;
-      } else if (clean === 'giá' || clean === 'đơn giá' || clean === 'price' || clean.includes('giá sản phẩm') || clean.includes('unit price')) {
-        map.unitPrice = idx;
-      } else if (clean.includes('bán ra') || clean.includes('số món bán') || clean.includes('items sold') || clean.includes('sold qty') || clean.includes('qty sold') || clean.includes('số lượng') || clean === 'qty') {
-        map.soldQty = idx;
-      } else if (clean.includes('hoàn tiền') || clean.includes('refunded') || clean.includes('refund qty') || clean.includes('số món hoàn')) {
-        map.refundQty = idx;
-      } else if (clean.includes('tên cửa hàng') || clean.includes('tên shop') || clean === 'shop name' || clean.includes('cửa hàng') || clean.includes('creator') || clean.includes('người bán')) {
-        map.shopName = idx;
-      } else if (clean.includes('loại đơn hàng') || clean.includes('loại đơn') || clean === 'order type') {
-        map.orderType = idx;
-      } else if (clean.includes('trạng thái quyết toán') || clean.includes('settlement status') || clean.includes('trạng thái') || clean === 'status') {
-        map.settlementStatus = idx;
-      } else if (clean.includes('loại nội dung') || clean === 'content type') {
-        map.contentType = idx;
-      } else if (clean.includes('id nội dung') || clean === 'content id') {
-        map.contentId = idx;
-      } else if (clean.includes('ngày đặt') || clean.includes('thời gian đặt') || clean === 'order time' || clean === 'order date' || clean.includes('create time') || clean.includes('created')) {
-        map.orderDate = idx;
-      } else if (clean.includes('ngày quyết toán') || clean.includes('thời gian quyết toán') || clean.includes('settlement time') || clean.includes('settlement date') || clean.includes('settled')) {
-        map.settlementDate = idx;
-      } else if (clean === 'gmv' || clean.includes('tổng gmv') || clean.includes('tổng tiền hàng') || clean.includes('turnover')) {
-        map.gmv = idx;
-      } else if (clean.includes('cơ sở hoa hồng thực tế') || clean.includes('cơ sở hoa hồng') || clean.includes('actual commission base') || clean.includes('commission base')) {
-        map.actualCommissionBase = idx;
-      } else if ((clean.includes('hoa hồng tiêu chuẩn') || clean.includes('standard commission')) && !clean.includes('ước tính') && !clean.includes('estimated')) {
-        map.standardCommission = idx;
-      } else if (clean.includes('quảng cáo cửa hàng') && !clean.includes('ước tính')) {
-        map.shopAdsCommission = idx;
-      } else if ((clean === 'thưởng' || clean.includes('tiền thưởng')) && !clean.includes('đối tác') && !clean.includes('ước tính')) {
-        map.bonus = idx;
-      } else if (clean.includes('đối tác liên kết') || clean.includes('partner bonus')) {
-        map.partnerBonus = idx;
-      } else if (clean.includes('isr')) {
-        map.taxISR = idx;
-      } else if (clean.includes('iva')) {
-        map.taxIVA = idx;
-      } else if (clean.includes('pit')) {
-        map.taxPIT = idx;
-      } else if (clean.includes('tổng số tiền nhận được cuối cùng') || clean.includes('số tiền nhận được cuối cùng') || clean.includes('thực nhận') || clean.includes('tiền nhận') || clean.includes('final commission') || clean.includes('net commission') || clean.includes('hoa hồng thực tế') || clean.includes('hoa hồng nhận được') || clean.includes('tiền hoa hồng')) {
-        map.totalNetCommission = idx;
+      // Bỏ qua hoàn toàn các cột ước tính (ước tính, est., estimated, ước_tính)
+      if (clean.includes('ước tính') || clean.includes('est.') || clean.includes('estimated') || clean.includes('ước_tính')) {
+        return;
+      }
+
+      for (const rule of FIELD_RULES) {
+        if (map[rule.key] !== undefined) continue;
+
+        const matched = rule.patterns.some(p => {
+          if (p === 'giá' || p === 'price' || p === 'thưởng' || p === 'gmv' || p === 'isr' || p === 'iva' || p === 'pit') {
+            return clean === p || clean.startsWith(p + ' ') || clean.endsWith(' ' + p) || clean.includes(' ' + p + ' ') || clean.includes('- ' + p);
+          }
+          return clean.includes(p);
+        });
+
+        if (matched) {
+          map[rule.key] = idx;
+          break;
+        }
       }
     });
+
     return map;
   }
 
@@ -8541,7 +8745,17 @@ window.AffiliateModule = (function() {
         let val = '';
         if (cell && cell.value !== null && cell.value !== undefined) {
           val = cell.value;
-          if (typeof val === 'object' && val !== null) {
+          // Xử lý cột ngày tháng ngay tại ExcelJS
+          const isDateType = (typeof ExcelJS !== 'undefined' && ExcelJS.ValueType && cell.type === ExcelJS.ValueType.Date);
+          if (isDateType || val instanceof Date) {
+            const d = (val instanceof Date) ? val : new Date(val);
+            if (!isNaN(d.getTime())) {
+              const y = d.getFullYear();
+              const m = String(d.getMonth() + 1).padStart(2, '0');
+              const day = String(d.getDate()).padStart(2, '0');
+              val = `${y}-${m}-${day}`;
+            }
+          } else if (typeof val === 'object' && val !== null) {
             if (val.result !== undefined && val.result !== null) val = val.result;
             else if (val.text !== undefined && val.text !== null) val = val.text;
             else if (Array.isArray(val.richText)) val = val.richText.map(t => t.text || '').join('');
@@ -8608,6 +8822,9 @@ window.AffiliateModule = (function() {
 
       // Nếu không phải file zip hoặc ExcelJS không đọc được trang tính, giải mã dạng text / CSV
       if (!matrix || matrix.length === 0) {
+        if (isZip) {
+          throw new Error('Không thể phân tích cấu trúc file Excel (.xlsx). Vui lòng kiểm tra lại file hoặc mở bằng Excel và lưu lại.');
+        }
         let textContent = '';
         try {
           textContent = new TextDecoder('utf-8').decode(uint8);
@@ -8649,7 +8866,7 @@ window.AffiliateModule = (function() {
       );
 
       if (!hasKeyCol) {
-        throw new Error('Không nhận diện được các cột dữ liệu TikTok Affiliate (Mã đơn hàng, Tên sản phẩm, Hoa hồng...). Vui lòng kiểm tra lại file báo cáo gốc.');
+        throw new Error('Không nhận diện được cột. Headers: ' + JSON.stringify(rawHeaders.slice(0, 10)) + ' | colMap: ' + JSON.stringify(colMap));
       }
 
       updateProgress(65, 'Đang trích xuất đơn hàng và đối soát trùng lặp...');
