@@ -8365,11 +8365,16 @@ window.AffiliateModule = (function() {
   function mapTikTokHeaders(headers) {
     const map = {};
     headers.forEach((h, idx) => {
-      if (!h) return;
-      const clean = String(h).trim().toLowerCase();
+      if (h === undefined || h === null) return;
+      const clean = String(h)
+        .replace(/[\uFEFF\u00A0\u200B]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+      if (!clean) return;
 
-      if (clean.includes('id đơn hàng') || clean.includes('mã đơn hàng') || clean.includes('mã đơn') || clean.includes('order id') || clean.includes('order_id') || clean.includes('order no') || clean.includes('order number') || clean === 'order') {
-        map.orderId = idx;
+      if (clean.includes('id đơn hàng') || clean.includes('mã đơn hàng') || clean.includes('mã đơn') || clean.includes('order id') || clean.includes('order_id') || clean.includes('order no') || clean.includes('order number') || clean === 'order' || clean === 'đơn hàng') {
+        if (map.orderId === undefined || clean.includes('id') || clean.includes('mã')) map.orderId = idx;
       } else if (clean.includes('id sku') || clean.includes('sku id') || clean.includes('mã sku') || clean === 'sku' || clean === 'sku_id') {
         map.skuId = idx;
       } else if (clean.includes('id sản phẩm') || clean.includes('mã sản phẩm') || clean.includes('product id') || clean.includes('mã hàng') || clean === 'item_id') {
@@ -8492,7 +8497,7 @@ window.AffiliateModule = (function() {
     return rows;
   }
 
-  // Trích xuất ma trận 2D từ file XLSX qua ExcelJS
+  // Trích xuất ma trận 2D từ file XLSX qua ExcelJS (dùng eachRow trực tiếp, không phụ thuộc rowCount)
   async function extractMatrixFromExcel(arrayBuffer) {
     if (typeof ExcelJS === 'undefined') return [];
     const workbook = new ExcelJS.Workbook();
@@ -8503,46 +8508,55 @@ window.AffiliateModule = (function() {
     let targetSheet = null;
     for (const ws of worksheets) {
       let foundHeader = false;
-      const rc = Math.min(10, ws.rowCount || ws.actualRowCount || (ws.lastRow ? ws.lastRow.number : 0));
-      for (let r = 1; r <= rc; r++) {
+      ws.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+        if (rowNumber > 5) return;
         const vals = [];
-        ws.getRow(r).eachCell({ includeEmpty: true }, c => vals.push(c && c.value ? String(c.value).toLowerCase() : ''));
+        row.eachCell({ includeEmpty: true }, c => {
+          let v = c ? c.value : '';
+          if (typeof v === 'object' && v !== null) {
+            v = v.result || v.text || (Array.isArray(v.richText) ? v.richText.map(t => t.text).join('') : '');
+          }
+          vals.push(String(v || '').toLowerCase());
+        });
         const t = vals.join(' ');
         if (t.includes('đơn hàng') || t.includes('sku') || t.includes('hoa hồng') || t.includes('order') || t.includes('gmv')) {
           foundHeader = true;
-          break;
         }
-      }
+      });
       if (foundHeader) {
         targetSheet = ws;
         break;
       }
     }
+
     if (!targetSheet) {
       targetSheet = worksheets.find(ws => (ws.name || '').trim().toLowerCase() === 'sheet1') || worksheets[0];
     }
     if (!targetSheet) return [];
 
     const matrix = [];
-    const maxRow = Math.max(targetSheet.rowCount || 0, targetSheet.actualRowCount || 0, targetSheet.lastRow ? targetSheet.lastRow.number : 0);
-
-    for (let r = 1; r <= maxRow; r++) {
-      const row = targetSheet.getRow(r);
+    targetSheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
       const rowArr = [];
-      const cellCount = Math.max(row.cellCount || 0, row.actualCellCount || 0, 50);
-      for (let c = 1; c <= cellCount; c++) {
-        const cell = row.getCell(c);
-        let val = (cell && cell.value !== null && cell.value !== undefined) ? cell.value : '';
-        if (typeof val === 'object' && val !== null) {
-          if (val.result !== undefined) val = val.result;
-          else if (val.text !== undefined) val = val.text;
+      row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+        let val = '';
+        if (cell && cell.value !== null && cell.value !== undefined) {
+          val = cell.value;
+          if (typeof val === 'object' && val !== null) {
+            if (val.result !== undefined && val.result !== null) val = val.result;
+            else if (val.text !== undefined && val.text !== null) val = val.text;
+            else if (Array.isArray(val.richText)) val = val.richText.map(t => t.text || '').join('');
+          }
         }
-        rowArr.push(val !== undefined && val !== null ? String(val).trim() : '');
+        rowArr[colNumber - 1] = val !== undefined && val !== null ? String(val).trim() : '';
+      });
+      for (let i = 0; i < rowArr.length; i++) {
+        if (rowArr[i] === undefined) rowArr[i] = '';
       }
       if (rowArr.some(c => c !== '')) {
         matrix.push(rowArr);
       }
-    }
+    });
+
     return matrix;
   }
 
@@ -8626,7 +8640,15 @@ window.AffiliateModule = (function() {
       }
 
       const colMap = mapTikTokHeaders(rawHeaders);
-      if (!colMap.orderId && !colMap.productName && !colMap.skuId && !colMap.totalNetCommission && !colMap.standardCommission) {
+      const hasKeyCol = (
+        colMap.orderId !== undefined ||
+        colMap.productName !== undefined ||
+        colMap.skuId !== undefined ||
+        colMap.totalNetCommission !== undefined ||
+        colMap.standardCommission !== undefined
+      );
+
+      if (!hasKeyCol) {
         throw new Error('Không nhận diện được các cột dữ liệu TikTok Affiliate (Mã đơn hàng, Tên sản phẩm, Hoa hồng...). Vui lòng kiểm tra lại file báo cáo gốc.');
       }
 
