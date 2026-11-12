@@ -9021,16 +9021,17 @@ window.AffiliateModule = (function() {
       // Lưu trạng thái LocalStorage ngay lập tức
       saveStateToLocalStorage();
 
-      updateProgress(85, 'Đang lưu file gốc lên Google Drive (DuLieu_App/Affiliate/TikTok/)...');
+      updateProgress(85, 'Đang lưu file gốc lên Google Drive (thư mục Affiliate)...');
 
-      // Tải file gốc lên Google Drive
+      // Tải file gốc lên Google Drive (Thư mục Affiliate: 1iDfTal_EVJZVTtTmYu4QFP9bbkBNFnFz)
       let driveResult = null;
       if (typeof dbUploadAffiliateFile === 'function') {
         driveResult = await dbUploadAffiliateFile(
           file.name,
           base64,
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          new Date().getFullYear()
+          new Date().getFullYear(),
+          '1iDfTal_EVJZVTtTmYu4QFP9bbkBNFnFz'
         );
       }
 
@@ -9056,6 +9057,10 @@ window.AffiliateModule = (function() {
       }
 
       updateProgress(95, 'Đang đồng bộ dữ liệu vào Google Sheets (sheet Affiliate_TikTok)...');
+
+      if (typeof dbInitAffiliateSheets === 'function') {
+        try { await dbInitAffiliateSheets(); } catch (_) {}
+      }
 
       // Ghi lô vào Google Sheets
       if (typeof dbSaveAffiliateBatch === 'function') {

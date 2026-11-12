@@ -5,6 +5,7 @@
 
 const SHEET_ID         = "1VB01bVUDH-fBKwiS4JfOhiNSqsH37snzYZnHefq86Xs";
 const DRIVE_FOLDER_ID  = "1eaGPgd7czUjSTBBXPsFJ1LT4ac4TlFHg";
+const AFFILIATE_DRIVE_FOLDER_ID = "1iDfTal_EVJZVTtTmYu4QFP9bbkBNFnFz";
 const FIREBASE_API_KEY  = "AIzaSyCgtdUzcEqdG2qE59WP1EO--xAgisucAsE"; // Lấy từ Firebase Web API Key
 const ALLOWED_EMAILS    = []; // Để rỗng []: Cho phép mọi tài khoản đã đăng nhập Firebase của bạn truy cập kho
 const SECRET_KEY_LEGACY = "Kntvntd482001"; // Fallback tạm thời trong lúc chuyển giao
@@ -144,6 +145,7 @@ function doPost(e) {
       case "scanSheet":          result = scanSheet(body.data);          break;
       case "trackSPX":        return respond(trackSPX(body.data));
       case "getAffiliateData":        result = getAffiliateData(); break;
+      case "initAffiliateSheets":     result = ensureAffiliateSheets(); break;
       case "saveAffiliateBatch":      result = saveAffiliateBatch(body.data); break;
       case "saveAffiliateItem":       result = saveAffiliateItem(body.data); break;
       case "deleteAffiliateItem":     result = deleteAffiliateItem(body.data); break;
@@ -348,6 +350,7 @@ function getAllData() {
   // Dữ liệu Affiliate Marketing (TikTok, Shopee, Uploads)
   let affiliate = { tiktok: [], shopee: [], uploads: [] };
   try {
+    ensureAffiliateSheets(ss);
     affiliate = getAffiliateData();
   } catch (e) { /* sheet chưa có thì bỏ qua */ }
 
@@ -940,11 +943,89 @@ function writeTaxDeclaration(data) {
 // AFFILIATE MARKETING BACKEND (TikTok & Shopee)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+const AFFILIATE_DEFAULT_HEADERS = {
+  Affiliate_TikTok: [
+    "id", "orderId", "skuId", "productId", "productName", "unitPrice", "soldQty",
+    "refundQty", "shopName", "orderType", "settlementStatus", "contentType", "contentId",
+    "orderDate", "settlementDate", "gmv", "actualCommissionBase", "standardCommission",
+    "shopAdsCommission", "bonus", "partnerBonus", "taxISR", "taxIVA", "taxPIT",
+    "totalNetCommission", "importDate", "sourceFileName", "source", "notes", "updatedAt"
+  ],
+  Affiliate_Shopee: [
+    "id", "platform", "orderDate", "settlementDate", "productName", "orderId",
+    "grossCommission", "withheldTax", "netCommission", "status", "notes", "source", "updatedAt"
+  ],
+  Affiliate_Uploads: [
+    "uploadId", "fileName", "driveFileId", "driveFileUrl", "uploadDate", "totalRows",
+    "newRows", "updatedRows", "status"
+  ]
+};
+
+// Đảm bảo các sheet Affiliate tồn tại và có đầy đủ tiêu đề cột
+function ensureAffiliateSheets(ss) {
+  if (!ss) ss = getSpreadsheet();
+  const sheetsToEnsure = ["Affiliate_TikTok", "Affiliate_Shopee", "Affiliate_Uploads"];
+  sheetsToEnsure.forEach(name => {
+    let sheet = ss.getSheetByName(name);
+    if (!sheet && name === "Affiliate_TikTok") {
+      sheet = ss.getSheetByName("Affiliate") || ss.getSheetByName("Aff") || ss.getSheetByName("TikTok_Affiliate");
+    }
+    if (!sheet) {
+      sheet = ss.insertSheet(name);
+    }
+    ensureAffiliateSheetHeaders(sheet, name);
+  });
+  return { ok: true };
+}
+
+function ensureAffiliateSheetHeaders(sheet, name) {
+  const expected = AFFILIATE_DEFAULT_HEADERS[name] || AFFILIATE_DEFAULT_HEADERS["Affiliate_TikTok"];
+  const lastCol = sheet.getLastColumn();
+  if (lastCol === 0) {
+    sheet.getRange(1, 1, 1, expected.length).setValues([expected]);
+    sheet.getRange(1, 1, 1, expected.length)
+      .setBackground("#1e293b").setFontColor("#ffffff").setFontWeight("bold");
+    try { sheet.setFrozenRows(1); } catch (_) {}
+    return;
+  }
+  const existingHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  let changed = false;
+  expected.forEach(h => {
+    if (existingHeaders.indexOf(h) === -1) {
+      existingHeaders.push(h);
+      changed = true;
+    }
+  });
+  if (changed) {
+    sheet.getRange(1, 1, 1, existingHeaders.length).setValues([existingHeaders]);
+    sheet.getRange(1, 1, 1, existingHeaders.length)
+      .setBackground("#1e293b").setFontColor("#ffffff").setFontWeight("bold");
+    try { sheet.setFrozenRows(1); } catch (_) {}
+  }
+}
+
+function getAffiliateSheet(platform) {
+  const ss = getSpreadsheet();
+  const primaryName = platform === "tiktok" ? "Affiliate_TikTok" : "Affiliate_Shopee";
+  let sheet = ss.getSheetByName(primaryName);
+  if (!sheet && platform === "tiktok") {
+    sheet = ss.getSheetByName("Affiliate") || ss.getSheetByName("Aff") || ss.getSheetByName("TikTok_Affiliate");
+  }
+  if (!sheet) {
+    sheet = ss.insertSheet(primaryName);
+  }
+  ensureAffiliateSheetHeaders(sheet, primaryName);
+  return sheet;
+}
+
 function getAffiliateData() {
   const ss = getSpreadsheet();
   const res = { tiktok: [], shopee: [], uploads: [] };
   
-  const tiktokSheet = ss.getSheetByName("Affiliate_TikTok");
+  let tiktokSheet = ss.getSheetByName("Affiliate_TikTok");
+  if (!tiktokSheet) {
+    tiktokSheet = ss.getSheetByName("Affiliate") || ss.getSheetByName("Aff") || ss.getSheetByName("TikTok_Affiliate");
+  }
   if (tiktokSheet) {
     const rows = sheetToObjects(tiktokSheet);
     res.tiktok = rows.map(r => {
@@ -997,10 +1078,14 @@ function getAffiliateData() {
 function saveAffiliateBatch(data) {
   if (!data || !data.items || !Array.isArray(data.items)) return { ok: false, error: "Dữ liệu không hợp lệ" };
   const platform = data.platform || "tiktok";
+  const sheet = getAffiliateSheet(platform);
   const sheetName = platform === "tiktok" ? "Affiliate_TikTok" : "Affiliate_Shopee";
-  const sheet = getSheet(sheetName);
+  ensureAffiliateSheetHeaders(sheet, sheetName);
   
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const lastCol = sheet.getLastColumn();
+  const headers = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
+  if (headers.length === 0) return { ok: false, error: "Không tìm thấy dòng tiêu đề cột trên sheet " + sheet.getName() };
+  
   const existingValues = sheet.getDataRange().getValues();
   
   const existingRowMap = {};
@@ -1052,9 +1137,12 @@ function saveAffiliateItem(data) {
 function deleteAffiliateItem(data) {
   if (!data || !data.id) return { ok: false, error: "Thiếu ID bản ghi" };
   const platform = data.platform || "tiktok";
-  const sheetName = platform === "tiktok" ? "Affiliate_TikTok" : "Affiliate_Shopee";
+  const primaryName = platform === "tiktok" ? "Affiliate_TikTok" : "Affiliate_Shopee";
   const ss = getSpreadsheet();
-  const sheet = ss.getSheetByName(sheetName);
+  let sheet = ss.getSheetByName(primaryName);
+  if (!sheet && platform === "tiktok") {
+    sheet = ss.getSheetByName("Affiliate") || ss.getSheetByName("Aff") || ss.getSheetByName("TikTok_Affiliate");
+  }
   if (!sheet) return { ok: true };
 
   const values = sheet.getDataRange().getValues();
@@ -1084,28 +1172,33 @@ function getOrCreateDriveFolder(parent, folderName) {
 function uploadAffiliateFile(data) {
   if (!data || !data.base64) throw new Error("Thiếu dữ liệu file tải lên.");
   
-  let rootFolder;
-  if (DRIVE_FOLDER_ID && DRIVE_FOLDER_ID.trim() !== "") {
-    let rawId = DRIVE_FOLDER_ID.trim();
-    if (rawId.includes("id=")) rawId = rawId.split("id=")[1].split("&")[0];
-    else if (rawId.includes("folders/")) rawId = rawId.split("folders/")[1].split("?")[0];
+  let targetFolder;
+  const affFolderId = (data.folderId || AFFILIATE_DRIVE_FOLDER_ID || "1iDfTal_EVJZVTtTmYu4QFP9bbkBNFnFz").trim();
+  try {
+    let rawId = affFolderId;
+    if (rawId.includes("folders/")) rawId = rawId.split("folders/")[1].split("?")[0];
+    else if (rawId.includes("id=")) rawId = rawId.split("id=")[1].split("&")[0];
     else if (rawId.includes("?")) rawId = rawId.split("?")[0];
-    rootFolder = DriveApp.getFolderById(rawId);
-  } else {
-    rootFolder = DriveApp.getRootFolder();
+    targetFolder = DriveApp.getFolderById(rawId);
+  } catch (err) {
+    console.warn("Lỗi khi tìm thư mục Affiliate Drive " + affFolderId + ":", err);
+    if (DRIVE_FOLDER_ID && DRIVE_FOLDER_ID.trim() !== "") {
+      let rawId = DRIVE_FOLDER_ID.trim();
+      if (rawId.includes("id=")) rawId = rawId.split("id=")[1].split("&")[0];
+      else if (rawId.includes("folders/")) rawId = rawId.split("folders/")[1].split("?")[0];
+      else if (rawId.includes("?")) rawId = rawId.split("?")[0];
+      targetFolder = DriveApp.getFolderById(rawId);
+    } else {
+      targetFolder = DriveApp.getRootFolder();
+    }
   }
-
-  // Tạo cây thư mục: DuLieu_App / Affiliate / TikTok / 2026
-  const f1 = getOrCreateDriveFolder(rootFolder, "DuLieu_App");
-  const f2 = getOrCreateDriveFolder(f1, "Affiliate");
-  const f3 = getOrCreateDriveFolder(f2, "TikTok");
-  const targetYear = String(data.year || new Date().getFullYear());
-  const yearFolder = getOrCreateDriveFolder(f3, targetYear);
 
   const decoded = Utilities.base64Decode(data.base64);
   const mimeType = data.mimeType || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   const blob = Utilities.newBlob(decoded, mimeType, data.fileName);
-  const file = yearFolder.createFile(blob);
+  
+  // Lưu trực tiếp file vào thư mục Affiliate chỉ định trên Google Drive
+  const file = targetFolder.createFile(blob);
 
   try {
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
@@ -1121,7 +1214,12 @@ function uploadAffiliateFile(data) {
 
 function saveAffiliateUploadLog(data) {
   if (!data) return { ok: false };
-  const sheet = getSheet("Affiliate_Uploads");
+  const ss = getSpreadsheet();
+  let sheet = ss.getSheetByName("Affiliate_Uploads");
+  if (!sheet) {
+    sheet = ss.insertSheet("Affiliate_Uploads");
+  }
+  ensureAffiliateSheetHeaders(sheet, "Affiliate_Uploads");
   sheet.appendRow([
     data.uploadId || ("up-" + Date.now()),
     data.fileName || "",

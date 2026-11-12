@@ -826,16 +826,30 @@ async function dbGetAffiliateData() {
   }
 }
 
+async function dbInitAffiliateSheets() {
+  if (!isCloudConfigured()) return { ok: false };
+  try {
+    return await rawApiPost("initAffiliateSheets", {});
+  } catch (err) {
+    console.warn("[Affiliate] dbInitAffiliateSheets error:", err);
+    return { ok: false, error: err.message };
+  }
+}
+
 async function dbSaveAffiliateBatch(platform, items) {
   if (!isCloudConfigured() || !items || items.length === 0) return { ok: true };
   try {
     showSyncStatus("syncing", `Đang đồng bộ ${items.length} đơn Affiliate...`);
     const res = await rawApiPost("saveAffiliateBatch", { platform, items });
+    if (res && res.error) {
+      showSyncStatus("error", "Lỗi đồng bộ: " + res.error);
+      return res;
+    }
     showSyncStatus("success", `Đã lưu ${items.length} đơn Affiliate ✓`);
     return res;
   } catch (err) {
     console.error("[Affiliate] dbSaveAffiliateBatch error:", err);
-    showSyncStatus("error", "Lỗi đồng bộ Affiliate lên Cloud");
+    showSyncStatus("error", "Lỗi đồng bộ Affiliate lên Cloud: " + err.message);
     return { ok: false, error: err.message };
   }
 }
@@ -845,11 +859,15 @@ async function dbSaveAffiliateItem(platform, item) {
   try {
     showSyncStatus("syncing", "Đang lưu giao dịch Affiliate...");
     const res = await rawApiPost("saveAffiliateItem", { platform, item });
+    if (res && res.error) {
+      showSyncStatus("error", "Lỗi lưu: " + res.error);
+      return res;
+    }
     showSyncStatus("success", "Đã lưu Affiliate ✓");
     return res;
   } catch (err) {
     console.error("[Affiliate] dbSaveAffiliateItem error:", err);
-    showSyncStatus("error", "Lỗi lưu Affiliate lên Cloud");
+    showSyncStatus("error", "Lỗi lưu Affiliate lên Cloud: " + err.message);
     return { ok: false, error: err.message };
   }
 }
@@ -863,12 +881,12 @@ async function dbDeleteAffiliateItem(platform, id, orderId, skuId) {
     return res;
   } catch (err) {
     console.error("[Affiliate] dbDeleteAffiliateItem error:", err);
-    showSyncStatus("error", "Lỗi xóa Affiliate trên Cloud");
+    showSyncStatus("error", "Lỗi xóa Affiliate trên Cloud: " + err.message);
     return { ok: false, error: err.message };
   }
 }
 
-async function dbUploadAffiliateFile(fileName, base64, mimeType, year) {
+async function dbUploadAffiliateFile(fileName, base64, mimeType, year, folderId) {
   if (!isCloudConfigured()) return null;
   try {
     showSyncStatus("syncing", "Đang lưu file gốc lên Google Drive...");
@@ -876,7 +894,8 @@ async function dbUploadAffiliateFile(fileName, base64, mimeType, year) {
       fileName: fileName,
       base64: base64,
       mimeType: mimeType || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      year: year || new Date().getFullYear()
+      year: year || new Date().getFullYear(),
+      folderId: folderId || "1iDfTal_EVJZVTtTmYu4QFP9bbkBNFnFz"
     });
     if (res && res.ok) {
       showSyncStatus("success", "Đã lưu file lên Google Drive ✓");
