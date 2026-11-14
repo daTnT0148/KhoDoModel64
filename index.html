@@ -459,6 +459,7 @@
               </div>
               <div style="flex:1; display:flex; align-items:center; justify-content:center; width:100%; margin-top:20px;">
                 <div id="val-yearly-revenue" style="font-size: 2.8rem; color: var(--success); margin: 0; font-weight:800; text-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);">0 vnd</div>
+                <div id="val-yearly-revenue-sub" style="font-size: 0.82rem; color: var(--text-muted); margin-top: 8px; font-weight: 500; letter-spacing: 0.2px;"></div>
               </div>
             </div>
 
@@ -1680,6 +1681,15 @@
                 <div class="form-group">
                   <label for="taxDetailNote">Ghi chú</label>
                   <textarea id="taxDetailNote" rows="3" placeholder="Ghi chú cho tờ khai này..."></textarea>
+                </div>
+                <!-- KPI: Doanh thu phải khai thuế trong kỳ -->
+                <div id="taxableRevenueCard" class="settings-card" style="margin-top:16px; padding:16px 20px; border:1px solid var(--border); border-radius:12px; background:rgba(99,102,241,0.06);">
+                  <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                    <i data-lucide="receipt" style="width:18px;height:18px;color:#a5b4fc;"></i>
+                    <span style="font-size:14px; font-weight:600; color:var(--text-white);">Doanh thu phải khai thuế trong kỳ</span>
+                  </div>
+                  <div id="val-taxable-revenue" style="font-size:1.8rem; font-weight:800; color:#a5b4fc; text-align:right;"></div>
+                  <div id="val-taxable-revenue-sub" style="font-size:0.78rem; color:var(--text-muted); margin-top:6px; text-align:right;"></div>
                 </div>
                 <div class="form-group" style="margin-top:8px;display:flex;gap:12px;">
                   <button type="button" class="btn btn-primary" onclick="previewTaxDeclaration()">

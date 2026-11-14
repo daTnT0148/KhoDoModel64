@@ -218,8 +218,14 @@ function renderTaxChannelSelector(selectedChannels) {
         decl.salesChannels = resultList;
         decl.salesChannel = resultList.includes('all') ? 'all' : resultList.join(', ');
         saveStateToLocalStorage();
+        // Sync cấu hình kênh lên Cloud
+        if (typeof dbSaveTaxConfig === 'function') {
+          dbSaveTaxConfig('taxChannels_' + _activeTaxDeclarationId, JSON.stringify(resultList));
+        }
       }
     }
+    // Cập nhật KPI doanh thu khai thuế theo kênh mới
+    updateTaxableRevenueKPI();
     return resultList;
   };
 
@@ -2046,26 +2052,46 @@ function updateYearlyRevenueKPI() {
   const currentYear = new Date().getFullYear().toString();
   const txs = state.transactions[state.activePortfolioId] || [];
   
-  let totalRevenueThisYear = 0;
-  
+  // 1. Doanh thu bán hàng (xe mô hình)
+  let salesRevenue = 0;
   txs.forEach(tx => {
     if (tx.date && tx.date.startsWith(currentYear)) {
-      // Ưu tiên Giá đăng bán Shopee (taxUnitPrice), nếu không có thì lấy Lợi nhuận (unitPrice)
       let finalPriceSource = tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null ? tx.taxUnitPrice : tx.unitPrice;
       const price = parseFloat(String(finalPriceSource || '0').replace(/[^0-9.-]+/g, '')) || 0;
       const qty = Number(tx.qty) || 1;
       if (tx.type === "sell") {
-        totalRevenueThisYear += price * qty;
+        salesRevenue += price * qty;
       } else if (tx.type === "return_sell") {
-        // Trả hàng bán: giảm trừ doanh thu của năm xảy ra trả hàng
-        totalRevenueThisYear -= price * qty;
+        salesRevenue -= price * qty;
       }
     }
   });
 
+  // 2. Doanh thu Affiliate — loop TẤT CẢ platform (future-proof cho sàn mới)
+  let affRevenue = 0;
+  if (state.affiliate) {
+    Object.keys(state.affiliate).forEach(platform => {
+      if (platform === 'uploads') return;
+      const items = state.affiliate[platform];
+      if (!Array.isArray(items)) return;
+      items.forEach(item => {
+        const itemDate = item.settlementDate || item.orderDate || '';
+        if (!itemDate.startsWith(currentYear)) return;
+        const netAmt = Number(item.totalNetCommission || item.netCommission || item.grossCommission || 0);
+        if (netAmt > 0) affRevenue += netAmt;
+      });
+    });
+  }
+
+  const totalRevenue = salesRevenue + affRevenue;
+
   const valEl = document.getElementById("val-yearly-revenue");
   if (valEl) {
-    valEl.innerText = formatCurrency(totalRevenueThisYear);
+    valEl.innerText = formatCurrency(totalRevenue);
+  }
+  const subEl = document.getElementById("val-yearly-revenue-sub");
+  if (subEl) {
+    subEl.innerHTML = 'Bán hàng: <strong>' + formatCurrency(salesRevenue) + '</strong> · Affiliate: <strong>' + formatCurrency(affRevenue) + '</strong>';
   }
 }
 
@@ -5565,9 +5591,17 @@ function openTaxDeclarationDetail(id) {
       from: initDatePicker('taxDetailFromWrapper'),
       to:   initDatePicker('taxDetailToWrapper')
     };
+    // Khi kỳ báo cáo thay đổi → cập nhật KPI doanh thu khai thuế
+    const fromW = document.getElementById('taxDetailFromWrapper');
+    const toW = document.getElementById('taxDetailToWrapper');
+    if (fromW) fromW.addEventListener('change', () => updateTaxableRevenueKPI());
+    if (toW) toW.addEventListener('change', () => updateTaxableRevenueKPI());
   }
   window.taxDatePickers.from.setValue(decl.reportPeriod.from || '');
   window.taxDatePickers.to.setValue(decl.reportPeriod.to || '');
+
+  // Cập nhật KPI doanh thu khai thuế khi mở tờ khai
+  updateTaxableRevenueKPI();
 
   lucide.createIcons();
 }
@@ -5578,6 +5612,66 @@ function closeTaxDeclarationDetail() {
   document.getElementById('taxDeclarationsListView').classList.remove('hidden');
   document.getElementById('taxDeclarationDetailView').classList.add('hidden');
   renderTaxDeclarations();
+}
+
+// --- KPI: Doanh thu phải khai thuế trong kỳ (tự động cập nhật theo kỳ + kênh đang chọn) ---
+function updateTaxableRevenueKPI() {
+  const valEl = document.getElementById('val-taxable-revenue');
+  const subEl = document.getElementById('val-taxable-revenue-sub');
+  if (!valEl) return;
+
+  if (!_activeTaxDeclarationId || !state.tax) {
+    valEl.innerText = '—';
+    if (subEl) subEl.innerText = '';
+    return;
+  }
+
+  const decl = (state.tax.declarations || []).find(d => d.id === _activeTaxDeclarationId);
+  if (!decl) {
+    valEl.innerText = '—';
+    if (subEl) subEl.innerText = '';
+    return;
+  }
+
+  // Lấy kỳ báo cáo từ UI (datepicker)
+  const fromVal = window.taxDatePickers ? window.taxDatePickers.from.getValue() : (decl.reportPeriod.from || '');
+  const toVal = window.taxDatePickers ? window.taxDatePickers.to.getValue() : (decl.reportPeriod.to || '');
+  const selectedChannels = getSelectedTaxChannels();
+
+  // 1. Doanh thu bán hàng trong kỳ (đã lọc kênh)
+  const txs = getFilteredSalesTransactions(fromVal, toVal, selectedChannels);
+  let salesRevenue = 0;
+  txs.forEach(tx => {
+    const price = getTaxRowUnitPrice(tx);
+    const qty = Number(tx.qty) || 1;
+    if (tx.type === 'return_sell') {
+      salesRevenue -= price * qty;
+    } else {
+      salesRevenue += price * qty;
+    }
+  });
+
+  // 2. Doanh thu Affiliate trong kỳ (nếu kênh Affiliate được tick)
+  let affRevenue = 0;
+  const includeAff = isAffiliateChannelSelected(selectedChannels);
+  if (includeAff) {
+    const affTxs = getAffiliateTaxTransactions({ from: fromVal, to: toVal });
+    affTxs.forEach(a => { affRevenue += a.amount; });
+  }
+
+  const totalTaxable = salesRevenue + affRevenue;
+  valEl.innerText = formatCurrency(totalTaxable);
+
+  if (subEl) {
+    let parts = ['Bán hàng: ' + formatCurrency(salesRevenue)];
+    if (includeAff) {
+      parts.push('Affiliate: ' + formatCurrency(affRevenue));
+    }
+    subEl.innerHTML = parts.join(' · ');
+    if (!fromVal && !toVal) {
+      subEl.innerHTML += '<br><span style="color:var(--warning);font-size:11px;">⚠ Chưa chọn kỳ báo cáo — hiển thị toàn bộ dữ liệu</span>';
+    }
+  }
 }
 
 // --- Logic Lấy Dữ Liệu Bán Hàng ---

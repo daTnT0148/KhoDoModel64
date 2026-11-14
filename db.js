@@ -1,4 +1,4 @@
-/**
+﻿/**
  * db.js — Lớp lưu trữ dữ liệu
  * Thay thế localStorage bằng Google Sheets qua Google Apps Script Web App.
  *
@@ -370,6 +370,9 @@ function mergeStateFromCloud(cloudData) {
     ops.filter(op => op.action === "deletePortfolio" && op.data && op.data.id).map(op => op.data.id)
   );
   const hasPendingSettings = ops.some(op => op.action === "saveSettings");
+  const pendingTaxConfigKeys = new Set(
+    ops.filter(op => op.action === "saveTaxConfig" && op.data && op.data.key).map(op => op.data.key)
+  );
 
   // --- Portfolios ---
   if (Array.isArray(cloudData.portfolios)) {
@@ -532,6 +535,39 @@ function mergeStateFromCloud(cloudData) {
       (state.affiliate.uploads || []).forEach(u => upMap.set(u.uploadId, u));
       cloudData.affiliate.uploads.forEach(u => upMap.set(u.uploadId, u));
       state.affiliate.uploads = Array.from(upMap.values());
+    }
+  }
+
+  // --- Tax Config (cấu hình kênh khai thuế đồng bộ từ Cloud) ---
+  if (cloudData.taxConfig && typeof cloudData.taxConfig === 'object') {
+    if (!state.tax) state.tax = {};
+    const declarations = state.tax.declarations || [];
+    let updatedActiveDecl = false;
+    Object.keys(cloudData.taxConfig).forEach(key => {
+      if (!key.startsWith('taxChannels_')) return;
+      if (pendingTaxConfigKeys.has(key)) return; // Giữ local nếu đang có thay đổi chờ đồng bộ
+      const declId = key.replace('taxChannels_', '');
+      const decl = declarations.find(d => d.id === declId);
+      if (decl) {
+        try {
+          const channels = JSON.parse(cloudData.taxConfig[key]);
+          if (Array.isArray(channels)) {
+            decl.salesChannels = channels;
+            decl.salesChannel = channels.includes('all') ? 'all' : channels.join(', ');
+            if (typeof _activeTaxDeclarationId !== 'undefined' && _activeTaxDeclarationId === declId) {
+              updatedActiveDecl = true;
+            }
+          }
+        } catch (e) { /* parse fail — bỏ qua */ }
+      }
+    });
+    // Nếu màn hình chi tiết tờ khai đang mở, refresh lại giao diện checkbox & KPI
+    if (updatedActiveDecl && typeof renderTaxChannelSelector === 'function') {
+      const activeDecl = declarations.find(d => d.id === _activeTaxDeclarationId);
+      if (activeDecl) {
+        renderTaxChannelSelector(activeDecl.salesChannels);
+        if (typeof updateTaxableRevenueKPI === 'function') updateTaxableRevenueKPI();
+      }
     }
   }
 }
@@ -933,5 +969,31 @@ async function dbDeleteAffiliateUploadLog(uploadId, fileName) {
     console.error("[Affiliate] dbDeleteAffiliateUploadLog error:", err);
     showSyncStatus("error", "Lỗi xóa lịch sử file trên Cloud");
     return { ok: false, error: err.message };
+  }
+}
+
+// ─── Cấu hình thuế (Tax_Config) ───────────────────────────────────────────
+
+async function dbSaveTaxConfig(key, value) {
+  if (!key) return { ok: true };
+  if (!isCloudConfigured()) {
+    return { ok: true, local: true };
+  }
+  try {
+    return await apiPost("saveTaxConfig", { key, value });
+  } catch (err) {
+    console.error("[Tax] dbSaveTaxConfig error:", err);
+    enqueuePendingOp("saveTaxConfig", { key, value });
+    return { ok: false, error: err.message };
+  }
+}
+
+async function dbGetTaxConfig() {
+  if (!isCloudConfigured()) return { ok: true, config: {} };
+  try {
+    return await rawApiPost("getTaxConfig", {});
+  } catch (err) {
+    console.error("[Tax] dbGetTaxConfig error:", err);
+    return { ok: false, config: {}, error: err.message };
   }
 }

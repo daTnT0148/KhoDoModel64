@@ -152,6 +152,8 @@ function doPost(e) {
       case "uploadAffiliateFile":     result = uploadAffiliateFile(body.data); break;
       case "saveAffiliateUploadLog":  result = saveAffiliateUploadLog(body.data); break;
       case "deleteAffiliateUploadLog":result = deleteAffiliateUploadLog(body.data); break;
+      case "saveTaxConfig":          result = saveTaxConfig(body.data); break;
+      case "getTaxConfig":           result = getTaxConfig(); break;
       default: result = { error: "Unknown action: " + action };
     }
   } catch (err) {
@@ -210,7 +212,8 @@ function createSheet(ss, name) {
     Affiliate_Shopee: ["id", "platform", "orderDate", "settlementDate", "productName", "orderId",
                        "grossCommission", "withheldTax", "netCommission", "status", "notes", "source", "updatedAt"],
     Affiliate_Uploads: ["uploadId", "fileName", "driveFileId", "driveFileUrl", "uploadDate", "totalRows",
-                        "newRows", "updatedRows", "status"]
+                        "newRows", "updatedRows", "status"],
+    Tax_Config: ["key", "value"]
   };
   if (headers[name]) {
     sheet.getRange(1, 1, 1, headers[name].length).setValues([headers[name]]);
@@ -234,6 +237,7 @@ function sheetToObjects(sheet) {
 // --- READ ---
 
 function getAllData() {
+  const ss = getSpreadsheet();
   // Ép ghi mọi thay đổi đang chờ trước khi đọc để luôn lấy dữ liệu mới nhất, chống đọc cache cũ
   SpreadsheetApp.flush();
 
@@ -355,7 +359,17 @@ function getAllData() {
     affiliate = getAffiliateData();
   } catch (e) { /* sheet chưa có thì bỏ qua */ }
 
-  return { portfolios, transactions, currency, activePortfolioId: activePortfolio, feeSettings, carImages, affiliate };
+  // Dữ liệu cấu hình thuế (Tax_Config)
+  let taxConfig = {};
+  try {
+    const taxSheet = ss.getSheetByName("Tax_Config");
+    if (taxSheet) {
+      const tcRows = sheetToObjects(taxSheet);
+      tcRows.forEach(r => { if (r.key) taxConfig[String(r.key)] = String(r.value || ""); });
+    }
+  } catch (e) { /* sheet chưa có thì bỏ qua */ }
+
+  return { portfolios, transactions, currency, activePortfolioId: activePortfolio, feeSettings, carImages, affiliate, taxConfig };
 }
 
 // --- WRITE ---
@@ -1277,4 +1291,35 @@ function deleteAffiliateUploadLog(data) {
     }
   }
   return { ok: true };
+}
+
+
+// ─── Tax Config (key-value store for tax channel settings) ──────────────────
+function saveTaxConfig(data) {
+  if (!data || !data.key) return { ok: false, error: "Thiếu key" };
+  const sheet = getSheet("Tax_Config");
+  const values = sheet.getDataRange().getValues();
+  const keyStr = String(data.key);
+  const valStr = String(data.value || "");
+
+  // Update existing row if key exists
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][0]) === keyStr) {
+      sheet.getRange(i + 1, 2).setValue(valStr);
+      return { ok: true };
+    }
+  }
+  // Append new row
+  sheet.appendRow([keyStr, valStr]);
+  return { ok: true };
+}
+
+function getTaxConfig() {
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName("Tax_Config");
+  if (!sheet) return { ok: true, config: {} };
+  const rows = sheetToObjects(sheet);
+  const config = {};
+  rows.forEach(r => { if (r.key) config[String(r.key)] = String(r.value || ""); });
+  return { ok: true, config: config };
 }
