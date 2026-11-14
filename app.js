@@ -9298,9 +9298,34 @@ window.AffiliateModule = (function() {
             : '<span class="text-muted">—</span>'}
         </td>
         <td style="text-align:center;"><span class="badge badge-status-paid">${item.status || 'Thành công'}</span></td>
+        <td style="text-align:center;">
+          <button type="button" class="btn btn-xs btn-outline-danger" onclick="AffiliateModule.deleteUploadLog('${item.uploadId || ''}', '${(item.fileName || '').replace(/'/g, "\\'")}')" title="Xóa lịch sử file này">
+            <i data-lucide="trash-2"></i>
+          </button>
+        </td>
       </tr>
     `).join('');
     if (window.lucide) lucide.createIcons();
+  }
+
+  async function deleteUploadLog(uploadId, fileName) {
+    if (!uploadId && !fileName) return;
+    const nameStr = fileName ? `"${fileName}"` : 'này';
+    if (!confirm(`Bạn có chắc chắn muốn xóa bản ghi lịch sử file ${nameStr} không?`)) return;
+
+    if (!state.affiliate || !state.affiliate.uploads) return;
+    state.affiliate.uploads = state.affiliate.uploads.filter(u => {
+      if (uploadId && u.uploadId === uploadId) return false;
+      if (!uploadId && fileName && u.fileName === fileName) return false;
+      return true;
+    });
+    saveStateToLocalStorage();
+
+    if (typeof dbDeleteAffiliateUploadLog === 'function') {
+      await dbDeleteAffiliateUploadLog(uploadId, fileName);
+    }
+
+    renderHistoryTable();
   }
 
   // --- Modal Chi tiết đơn hàng ---
@@ -9628,7 +9653,8 @@ window.AffiliateModule = (function() {
     closeHistoryModal: closeHistoryModal,
     openDetailModal: openDetailModal,
     closeDetailModal: closeDetailModal,
-    deleteItem: deleteItem
+    deleteItem: deleteItem,
+    deleteUploadLog: deleteUploadLog
   };
 })();
 

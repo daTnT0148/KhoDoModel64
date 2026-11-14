@@ -498,11 +498,13 @@ function mergeStateFromCloud(cloudData) {
     if (Array.isArray(cloudData.affiliate.tiktok)) {
       const localMap = new Map();
       (state.affiliate.tiktok || []).forEach(item => {
-        const key = item.orderId + "_" + (item.skuId || item.productId || "0");
+        const key = String(item.orderId || item.id || "") + "_" + String(item.skuId || item.productId || "0");
+        if (key === "_0") return; // skip invalid items
         localMap.set(key, item);
       });
       cloudData.affiliate.tiktok.forEach(cloudItem => {
-        const key = cloudItem.orderId + "_" + (cloudItem.skuId || cloudItem.productId || "0");
+        if (!cloudItem.orderId && !cloudItem.id) return; // skip items without identifier
+        const key = String(cloudItem.orderId || cloudItem.id || "") + "_" + String(cloudItem.skuId || cloudItem.productId || "0");
         const localItem = localMap.get(key);
         if (!localItem || (cloudItem.updatedAt || 0) >= (localItem.updatedAt || 0)) {
           localMap.set(key, cloudItem);
@@ -850,6 +852,7 @@ async function dbSaveAffiliateBatch(platform, items) {
   } catch (err) {
     console.error("[Affiliate] dbSaveAffiliateBatch error:", err);
     showSyncStatus("error", "Lỗi đồng bộ Affiliate lên Cloud: " + err.message);
+    enqueuePendingOp("saveAffiliateBatch", { platform, items });
     return { ok: false, error: err.message };
   }
 }
@@ -868,6 +871,7 @@ async function dbSaveAffiliateItem(platform, item) {
   } catch (err) {
     console.error("[Affiliate] dbSaveAffiliateItem error:", err);
     showSyncStatus("error", "Lỗi lưu Affiliate lên Cloud: " + err.message);
+    enqueuePendingOp("saveAffiliateItem", { platform, item });
     return { ok: false, error: err.message };
   }
 }
@@ -915,5 +919,19 @@ async function dbSaveAffiliateUploadLog(logData) {
   } catch (err) {
     console.error("[Affiliate] dbSaveAffiliateUploadLog error:", err);
     return { ok: false };
+  }
+}
+
+async function dbDeleteAffiliateUploadLog(uploadId, fileName) {
+  if (!isCloudConfigured() || (!uploadId && !fileName)) return { ok: true };
+  try {
+    showSyncStatus("syncing", "Đang xóa lịch sử file...");
+    const res = await rawApiPost("deleteAffiliateUploadLog", { uploadId, fileName });
+    showSyncStatus("success", "Đã xóa lịch sử file ✓");
+    return res;
+  } catch (err) {
+    console.error("[Affiliate] dbDeleteAffiliateUploadLog error:", err);
+    showSyncStatus("error", "Lỗi xóa lịch sử file trên Cloud");
+    return { ok: false, error: err.message };
   }
 }

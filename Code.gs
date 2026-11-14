@@ -151,6 +151,7 @@ function doPost(e) {
       case "deleteAffiliateItem":     result = deleteAffiliateItem(body.data); break;
       case "uploadAffiliateFile":     result = uploadAffiliateFile(body.data); break;
       case "saveAffiliateUploadLog":  result = saveAffiliateUploadLog(body.data); break;
+      case "deleteAffiliateUploadLog":result = deleteAffiliateUploadLog(body.data); break;
       default: result = { error: "Unknown action: " + action };
     }
   } catch (err) {
@@ -1197,19 +1198,43 @@ function uploadAffiliateFile(data) {
   const mimeType = data.mimeType || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   const blob = Utilities.newBlob(decoded, mimeType, data.fileName);
   
-  // Lưu trực tiếp file vào thư mục Affiliate chỉ định trên Google Drive
-  const file = targetFolder.createFile(blob);
+  // Tạo subfolder Năm/Tháng tự động
+  const now = new Date();
+  const yearFolder = getOrCreateDriveFolder(targetFolder, String(now.getFullYear()));
+  const monthName = ("0" + (now.getMonth() + 1)).slice(-2);
+  const monthFolder = getOrCreateDriveFolder(yearFolder, monthName);
+
+  const file = monthFolder.createFile(blob);
 
   try {
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
   } catch (_) {}
 
-  return {
+  const result = {
     ok: true,
     fileId: file.getId(),
     fileName: file.getName(),
     fileUrl: file.getUrl()
   };
+
+  // Tự động ghi log vào sheet Affiliate_Uploads
+  try {
+    saveAffiliateUploadLog({
+      uploadId: data.uploadId || ("up-" + Date.now()),
+      fileName: data.fileName || file.getName(),
+      driveFileId: file.getId(),
+      driveFileUrl: file.getUrl(),
+      uploadDate: Utilities.formatDate(now, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss"),
+      totalRows: data.totalRows || 0,
+      newRows: data.newRows || 0,
+      updatedRows: data.updatedRows || 0,
+      status: "Thành công"
+    });
+  } catch (logErr) {
+    console.warn("uploadAffiliateFile: auto-log failed:", logErr);
+  }
+
+  return result;
 }
 
 function saveAffiliateUploadLog(data) {
@@ -1231,5 +1256,25 @@ function saveAffiliateUploadLog(data) {
     Number(data.updatedRows || 0),
     data.status || "Thành công"
   ]);
+  return { ok: true };
+}
+
+function deleteAffiliateUploadLog(data) {
+  if (!data || (!data.uploadId && !data.fileName)) return { ok: false, error: "Thiếu thông tin bản ghi" };
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName("Affiliate_Uploads");
+  if (!sheet) return { ok: true };
+
+  const values = sheet.getDataRange().getValues();
+  for (let i = 1; i < values.length; i++) {
+    const rowUploadId = String(values[i][0] || "");
+    const rowFileName = String(values[i][1] || "");
+    const match = (data.uploadId && rowUploadId === String(data.uploadId)) ||
+                  (data.fileName && rowFileName === String(data.fileName));
+    if (match) {
+      sheet.deleteRow(i + 1);
+      return { ok: true };
+    }
+  }
   return { ok: true };
 }
