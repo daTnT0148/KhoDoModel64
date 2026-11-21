@@ -560,6 +560,44 @@ function replaceTransactions(data) {
  * @param {Object} data - { trackingNumbers: string[] }
  * @returns {Object} - { results: { [tn]: { status, description, time, milestoneCode, location, slsTn, error } } }
  */
+// Chuẩn hóa mã vận đơn SPX (bỏ dấu cách, in hoa, sửa VNO -> VN0, trích từ URL)
+function normalizeTrackingNumber_(raw) {
+  if (!raw) return "";
+  var s = String(raw).trim();
+  if (!s) return "";
+
+  // 1. Nếu dán cả đường link SPX
+  if (s.indexOf("spx.vn") !== -1 || s.indexOf("tracking_number=") !== -1 || s.indexOf("spx_tn=") !== -1) {
+    try {
+      var match = s.match(/(?:tracking_number|spx_tn)=([a-zA-Z0-9%_-]+)/i);
+      if (match && match[1]) {
+        s = decodeURIComponent(match[1]);
+      }
+    } catch (_) {}
+  }
+
+  // 2. Tiền tố thường gặp
+  s = s.replace(/^(mã\s*vận\s*đơn|mã\s*đơn\s*hàng|mvd|tracking\s*number|tracking|bill)\s*[:：#\-–—]?\s*/i, "");
+
+  // 3. Xóa khoảng trắng và ký tự phân cách
+  s = s.replace(/[\s\-_.,\t\r\n\u200B-\u200D\uFEFF]+/g, "");
+
+  // 4. In hoa
+  s = s.toUpperCase();
+
+  // 5. Chuẩn hóa O -> 0
+  s = s.replace(/^SPXVNO/i, "SPXVN0");
+  s = s.replace(/^VNO(?=\d)/i, "VN0");
+  s = s.replace(/^SPXO(?=\d)/i, "SPX0");
+
+  // 6. Tự động thêm SPX nếu bắt đầu bằng VN0...
+  if (/^VN0\d{6,}/i.test(s)) {
+    s = "SPX" + s;
+  }
+
+  return s;
+}
+
 function trackSPX(data) {
   if (!data || !Array.isArray(data.trackingNumbers) || data.trackingNumbers.length === 0) {
     return { error: "Missing trackingNumbers array" };
@@ -567,12 +605,15 @@ function trackSPX(data) {
 
   // Giới hạn tối đa 20 mã mỗi lần gọi
   const MAX_BATCH = 20;
-  const trackingNumbers = data.trackingNumbers.slice(0, MAX_BATCH);
+  const rawTrackingNumbers = data.trackingNumbers.slice(0, MAX_BATCH);
   const results = {};
 
-  trackingNumbers.forEach(tn => {
+  rawTrackingNumbers.forEach(rawTn => {
+    const cleanTn = normalizeTrackingNumber_(rawTn) || String(rawTn).trim();
+    if (!cleanTn) return;
+
     try {
-      const url = "https://spx.vn/shipment/order/open/order/get_order_info?spx_tn=" + encodeURIComponent(tn) + "&language_code=vi";
+      const url = "https://spx.vn/shipment/order/open/order/get_order_info?spx_tn=" + encodeURIComponent(cleanTn) + "&language_code=vi";
       const response = UrlFetchApp.fetch(url, {
         method: "get",
         muteHttpExceptions: true,
@@ -584,19 +625,25 @@ function trackSPX(data) {
 
       const httpCode = response.getResponseCode();
       if (httpCode !== 200) {
-        results[tn] = { error: "HTTP " + httpCode };
+        const errObj = { error: "HTTP " + httpCode };
+        results[cleanTn] = errObj;
+        if (rawTn && rawTn !== cleanTn) results[rawTn] = errObj;
         return;
       }
 
       const json = JSON.parse(response.getContentText());
       if (json.retcode !== 0) {
-        results[tn] = { error: "SPX retcode: " + json.retcode + (json.message ? " - " + json.message : "") };
+        const errObj = { error: "SPX retcode: " + json.retcode + (json.message ? " - " + json.message : "") };
+        results[cleanTn] = errObj;
+        if (rawTn && rawTn !== cleanTn) results[rawTn] = errObj;
         return;
       }
 
       const trackingInfo = json.data && json.data.sls_tracking_info;
       if (!trackingInfo || !trackingInfo.records || trackingInfo.records.length === 0) {
-        results[tn] = { error: "Không có dữ liệu theo dõi" };
+        const errObj = { error: "Không có dữ liệu theo dõi" };
+        results[cleanTn] = errObj;
+        if (rawTn && rawTn !== cleanTn) results[rawTn] = errObj;
         return;
       }
 
@@ -609,7 +656,7 @@ function trackSPX(data) {
         }
       }
 
-      results[tn] = {
+      const infoObj = {
         status: latest.milestone_name || "",
         description: latest.buyer_description || latest.milestone_name || "",
         time: Number(latest.actual_time) || 0,
@@ -619,8 +666,15 @@ function trackSPX(data) {
         nextLocation: latest.next_location || "",
         slsTn: trackingInfo.sls_tn || ""
       };
+
+      results[cleanTn] = infoObj;
+      if (rawTn && rawTn !== cleanTn) {
+        results[rawTn] = infoObj;
+      }
     } catch (e) {
-      results[tn] = { error: "Exception: " + e.message };
+      const errObj = { error: "Exception: " + e.message };
+      results[cleanTn] = errObj;
+      if (rawTn && rawTn !== cleanTn) results[rawTn] = errObj;
     }
   });
 

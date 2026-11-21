@@ -2147,12 +2147,22 @@ function renderTransactionHistoryTable(portfolioId, inventoryList) {
   const historySearchEl = document.getElementById("historySearchInput");
   const historySearch = historySearchEl ? historySearchEl.value.toLowerCase().trim() : "";
   if (historySearch) {
-    txs = txs.filter(tx =>
-      tx.modelName.toLowerCase().includes(historySearch) ||
-      tx.brand.toLowerCase().includes(historySearch) ||
-      (tx.notes || "").toLowerCase().includes(historySearch) ||
-      (tx.trackingNumber || "").toLowerCase().includes(historySearch)
-    );
+    const cleanSearch = typeof normalizeTrackingNumber === "function" ? normalizeTrackingNumber(historySearch).toLowerCase() : "";
+    txs = txs.filter(tx => {
+      if (tx.modelName.toLowerCase().includes(historySearch) ||
+          tx.brand.toLowerCase().includes(historySearch) ||
+          (tx.notes || "").toLowerCase().includes(historySearch) ||
+          (tx.trackingNumber || "").toLowerCase().includes(historySearch)) {
+        return true;
+      }
+      if (cleanSearch && tx.trackingNumber && typeof normalizeTrackingNumber === "function") {
+        const cleanTxTn = normalizeTrackingNumber(tx.trackingNumber).toLowerCase();
+        if (cleanTxTn.includes(cleanSearch) || cleanSearch.includes(cleanTxTn)) {
+          return true;
+        }
+      }
+      return false;
+    });
   }
 
   // Sắp xếp theo ngày theo lựa chọn (mới nhất / cũ nhất)
@@ -3850,6 +3860,74 @@ function confirmRedirectToReturnFormIfNeeded(notes) {
   return true; // hủy submit hiện tại
 }
 
+// Chuẩn hóa mã vận đơn (SPX Express): tự động bỏ dấu cách, in hoa, sửa VNO -> VN0, trích xuất từ link
+function normalizeTrackingNumber(raw) {
+  if (!raw) return "";
+  let s = String(raw).trim();
+  if (!s) return "";
+
+  // 1. Nếu dán cả đường link SPX (VD: https://spx.vn/tracking?tracking_number=SPXVN... hoặc ?spx_tn=...)
+  if (s.includes("spx.vn") || s.includes("tracking_number=") || s.includes("spx_tn=")) {
+    try {
+      const match = s.match(/(?:tracking_number|spx_tn)=([a-zA-Z0-9%_-]+)/i);
+      if (match && match[1]) {
+        s = decodeURIComponent(match[1]);
+      }
+    } catch (_) {}
+  }
+
+  // 2. Loại bỏ các tiền tố / nhãn thường gặp khi copy từ Shopee / tin nhắn
+  s = s.replace(/^(mã\s*vận\s*đơn|mã\s*đơn\s*hàng|mvd|tracking\s*number|tracking|bill)\s*[:：#\-–—]?\s*/i, "");
+
+  // 3. Loại bỏ toàn bộ khoảng trắng, dấu phân cách (dấu gạch ngang, gạch dưới, chấm, phẩy, tab, enter...)
+  s = s.replace(/[\s\-_.,\t\r\n\u200B-\u200D\uFEFF]+/g, "");
+
+  // 4. Chuyển toàn bộ thành chữ in hoa
+  s = s.toUpperCase();
+
+  // 5. Chuẩn hóa lỗi người dùng gõ chữ 'O' thay cho số '0' ở tiền tố SPXVN0 / VN0
+  s = s.replace(/^SPXVNO/i, "SPXVN0");
+  s = s.replace(/^VNO(?=\d)/i, "VN0");
+  s = s.replace(/^SPXO(?=\d)/i, "SPX0");
+
+  // 6. Tự động bù tiền tố "SPX" nếu người dùng copy từ Shopee chỉ có "VN0..." (VD: "VN0 833 111 111" -> "SPXVN0833111111")
+  if (/^VN0\d{6,}/i.test(s)) {
+    s = "SPX" + s;
+  }
+
+  return s;
+}
+window.normalizeTrackingNumber = normalizeTrackingNumber;
+
+// Gắn bộ tự động chuẩn hóa tức thời (real-time) cho ô nhập mã vận đơn
+function bindTrackingNumberInputAutoFormat(inputId) {
+  const input = document.getElementById(inputId);
+  if (!input || input.dataset.trackingAutoFormatBound) return;
+  input.dataset.trackingAutoFormatBound = "1";
+
+  const format = () => {
+    const raw = input.value;
+    if (!raw) return;
+    const norm = normalizeTrackingNumber(raw);
+    if (norm && norm !== raw) {
+      input.value = norm;
+    }
+  };
+
+  input.addEventListener("input", () => {
+    // Tự động bỏ dấu cách và viết hoa ngay khi người dùng gõ hoặc dán
+    if (input.value && (input.value.includes(" ") || input.value !== input.value.toUpperCase() || input.value.includes("-"))) {
+      input.value = normalizeTrackingNumber(input.value);
+    }
+  });
+  input.addEventListener("change", format);
+  input.addEventListener("blur", format);
+  input.addEventListener("paste", () => {
+    setTimeout(format, 0);
+  });
+}
+window.bindTrackingNumberInputAutoFormat = bindTrackingNumberInputAutoFormat;
+
 // CẢNH BÁO 3: phát hiện giao dịch trùng lặp — cùng type, xe, ngày, giá, số lượng, mã vận đơn
 function isDuplicateTransaction(type, modelName, brand, color, packaging, date, price, qty, trackingNumber) {
   const txs = state.transactions[state.activePortfolioId] || [];
@@ -3869,8 +3947,8 @@ function isDuplicateTransaction(type, modelName, brand, color, packaging, date, 
     // Kiểm tra mã vận đơn (trackingNumber):
     // 1 xe cùng màu, mã, số lượng, ngày là bình thường (khác đơn/khác kiện).
     // Nếu có mã vận đơn ở giao dịch hiện tại hoặc giao dịch trong hệ thống, bắt buộc phải so sánh mã vận đơn.
-    const currentTracking = norm(trackingNumber);
-    const existingTracking = norm(tx.trackingNumber);
+    const currentTracking = normalizeTrackingNumber(trackingNumber);
+    const existingTracking = normalizeTrackingNumber(tx.trackingNumber);
     if (currentTracking || existingTracking) {
       return currentTracking === existingTracking;
     }
@@ -3972,6 +4050,9 @@ function setupFormSubmissions() {
     applySellChannelUI(sellChannelEl.value);
   }
 
+  // Tự động chuẩn hóa mã vận đơn SPX (bỏ cách, in hoa, sửa VNO -> VN0) khi nhập/dán
+  bindTrackingNumberInputAutoFormat("sellTrackingNumber");
+
   // FORM BÁN HÀNG (SELL)
   if (sellForm) {
     sellForm.addEventListener("submit", (e) => {
@@ -4019,8 +4100,12 @@ function setupFormSubmissions() {
     // CẢNH BÁO 2: ghi chú có vẻ nói về trả hàng → gợi ý dùng form Trả hàng thay thế
     if (confirmRedirectToReturnFormIfNeeded(notes)) return;
 
-    // Mã vận đơn SPX (không bắt buộc)
-    const trackingNumber = (document.getElementById("sellTrackingNumber").value || "").trim();
+    // Mã vận đơn SPX (không bắt buộc, tự động chuẩn hóa)
+    const sellTrackingEl = document.getElementById("sellTrackingNumber");
+    const trackingNumber = normalizeTrackingNumber(sellTrackingEl ? sellTrackingEl.value : "");
+    if (sellTrackingEl && trackingNumber && trackingNumber !== sellTrackingEl.value) {
+      sellTrackingEl.value = trackingNumber;
+    }
 
     // CẢNH BÁO 3: phát hiện giao dịch trùng lặp (cùng xe, ngày, giá, số lượng, mã vận đơn)
     if (isDuplicateTransaction("sell", modelName, brand, color, packaging, date, unitPrice, qty, trackingNumber)) {
@@ -5372,7 +5457,8 @@ function openEditTxModal(txId) {
   if (trackingGroup && trackingInput) {
     if (tx.type === "sell") {
       trackingGroup.classList.remove("hidden");
-      trackingInput.value = tx.trackingNumber || "";
+      trackingInput.value = normalizeTrackingNumber(tx.trackingNumber || "");
+      bindTrackingNumberInputAutoFormat("editTxTrackingNumber");
     } else {
       trackingGroup.classList.add("hidden");
       trackingInput.value = "";
@@ -5396,6 +5482,9 @@ function setupEditTxModalHandlers() {
   const modal = document.getElementById("editTxModal");
 
   if (!form) return;
+
+  // Tự động chuẩn hóa mã vận đơn SPX khi gõ/dán trong modal sửa giao dịch
+  bindTrackingNumberInputAutoFormat("editTxTrackingNumber");
 
   if (closeBtn) closeBtn.onclick = () => closeEditTxModal();
   if (cancelBtn) cancelBtn.onclick = () => closeEditTxModal();
@@ -5510,7 +5599,8 @@ function setupEditTxModalHandlers() {
 
     // Cập nhật mã vận đơn SPX (chỉ cho giao dịch bán)
     if (txType === "sell") {
-      const trackingVal = (document.getElementById("editTxTrackingNumber").value || "").trim();
+      const trackingEl = document.getElementById("editTxTrackingNumber");
+      const trackingVal = normalizeTrackingNumber(trackingEl ? trackingEl.value : "");
       if (trackingVal) {
         txs[txIndex].trackingNumber = trackingVal;
       } else {
@@ -7606,6 +7696,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   setupProfitChartPeriodToggle(); // Kích hoạt bộ lọc biểu đồ lợi nhuận
   setupEditTxModalHandlers();    // Kích hoạt bộ chỉnh sửa Modal
   setupAssistantChips();         // Kích hoạt các nút chip trợ lý tài chính Dashboard
+  bindTrackingNumberInputAutoFormat("sellTrackingNumber");
+  bindTrackingNumberInputAutoFormat("editTxTrackingNumber");
 
   // 3. Tính toán và làm tươi dữ liệu ban đầu
   refreshApplicationData();
@@ -8441,13 +8533,17 @@ window.TrackingModule = (function() {
   // --- Cache helpers (Lưu vào localStorage để không bị mất khi đóng trình duyệt hoặc tải lại app) ---
   function getCachedStatus(tn) {
     if (!tn) return null;
+    const cleanTn = typeof normalizeTrackingNumber === 'function' ? normalizeTrackingNumber(tn) : String(tn).trim().toUpperCase();
     try {
-      let raw = localStorage.getItem(CACHE_PREFIX + tn);
+      let raw = localStorage.getItem(CACHE_PREFIX + cleanTn);
+      if (!raw && cleanTn !== tn) {
+        raw = localStorage.getItem(CACHE_PREFIX + tn);
+      }
       if (!raw) {
         // Fallback đọc từ sessionStorage cũ (nếu có) và migrate sang localStorage
-        raw = sessionStorage.getItem(CACHE_PREFIX + tn);
+        raw = sessionStorage.getItem(CACHE_PREFIX + cleanTn) || sessionStorage.getItem(CACHE_PREFIX + tn);
         if (raw) {
-          localStorage.setItem(CACHE_PREFIX + tn, raw);
+          localStorage.setItem(CACHE_PREFIX + cleanTn, raw);
         }
       }
       if (!raw) return null;
@@ -8465,9 +8561,13 @@ window.TrackingModule = (function() {
 
   function setCachedStatus(tn, data) {
     if (!tn || !data) return;
+    const cleanTn = typeof normalizeTrackingNumber === 'function' ? normalizeTrackingNumber(tn) : String(tn).trim().toUpperCase();
     try {
       const obj = Object.assign({}, data, { _cachedAt: Date.now() });
-      localStorage.setItem(CACHE_PREFIX + tn, JSON.stringify(obj));
+      localStorage.setItem(CACHE_PREFIX + cleanTn, JSON.stringify(obj));
+      if (cleanTn !== tn) {
+        localStorage.setItem(CACHE_PREFIX + tn, JSON.stringify(obj));
+      }
     } catch(e) { /* ignore */ }
   }
 
@@ -8489,7 +8589,11 @@ window.TrackingModule = (function() {
     }
 
     // Lọc các giao dịch bán có mã vận đơn
-    return txs.filter(tx => tx && tx.type === 'sell' && tx.trackingNumber && String(tx.trackingNumber).trim() !== '');
+    return txs.filter(tx => {
+      if (!tx || tx.type !== 'sell' || !tx.trackingNumber) return false;
+      const clean = typeof normalizeTrackingNumber === 'function' ? normalizeTrackingNumber(tx.trackingNumber) : String(tx.trackingNumber).trim();
+      return clean !== '';
+    });
   }
 
   // --- Kiểm tra đơn đã giao thành công ---
@@ -8705,13 +8809,15 @@ window.TrackingModule = (function() {
   // --- Gọi API SPX qua Apps Script ---
   async function fetchSPXStatus(trackingNumbers) {
     if (!isCloudConfigured() || !trackingNumbers || trackingNumbers.length === 0) return {};
+    const cleanNumbers = [...new Set(trackingNumbers.map(tn => typeof normalizeTrackingNumber === 'function' ? normalizeTrackingNumber(tn) : String(tn).trim()).filter(Boolean))];
+    if (cleanNumbers.length === 0) return {};
     try {
-      const res = await rawApiPost('trackSPX', { trackingNumbers: trackingNumbers });
+      const res = await rawApiPost('trackSPX', { trackingNumbers: cleanNumbers });
       return (res && res.results) ? res.results : {};
     } catch(e) {
       console.error('[Tracking] API error:', e);
       const errResults = {};
-      trackingNumbers.forEach(tn => { errResults[tn] = { error: e.message || 'Lỗi kết nối' }; });
+      cleanNumbers.forEach(tn => { errResults[tn] = { error: e.message || 'Lỗi kết nối' }; });
       return errResults;
     }
   }
@@ -8736,16 +8842,23 @@ window.TrackingModule = (function() {
     }
     if (emptyState) emptyState.classList.add('hidden');
 
-    // Lọc theo search
+    // Lọc theo search (hỗ trợ cả tìm theo mã đã gõ cách hoặc chưa chuẩn hóa)
     let filteredTxs = allTrackingTxs;
     if (_searchQuery) {
       const q = _searchQuery.toLowerCase();
-      filteredTxs = filteredTxs.filter(tx =>
-        (tx.modelName || '').toLowerCase().includes(q) ||
-        (tx.brand || '').toLowerCase().includes(q) ||
-        (tx.trackingNumber || '').toLowerCase().includes(q) ||
-        (tx.notes || '').toLowerCase().includes(q)
-      );
+      const cleanQ = typeof normalizeTrackingNumber === 'function' ? normalizeTrackingNumber(_searchQuery).toLowerCase() : '';
+      filteredTxs = filteredTxs.filter(tx => {
+        const matchBasic = (tx.modelName || '').toLowerCase().includes(q) ||
+          (tx.brand || '').toLowerCase().includes(q) ||
+          (tx.trackingNumber || '').toLowerCase().includes(q) ||
+          (tx.notes || '').toLowerCase().includes(q);
+        if (matchBasic) return true;
+        if (cleanQ && tx.trackingNumber && typeof normalizeTrackingNumber === 'function') {
+          const cleanTxTn = normalizeTrackingNumber(tx.trackingNumber).toLowerCase();
+          return cleanTxTn.includes(cleanQ) || cleanQ.includes(cleanTxTn);
+        }
+        return false;
+      });
     }
 
     // Lọc theo trạng thái: 'active' (Đang xử lý), 'completed' (Đã kết thúc), 'returned' (Hàng hoàn)
@@ -8815,13 +8928,16 @@ window.TrackingModule = (function() {
     container.querySelectorAll('.tracking-refresh-btn').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.preventDefault();
-        const tn = btn.dataset.tn;
+        const rawTn = btn.dataset.tn;
+        const tn = typeof normalizeTrackingNumber === 'function' ? normalizeTrackingNumber(rawTn) : String(rawTn || '').trim();
         if (!tn || btn.classList.contains('spinning')) return;
         btn.classList.add('spinning');
         try {
           const results = await fetchSPXStatus([tn]);
-          if (results[tn]) {
-            setCachedStatus(tn, results[tn]);
+          const resultObj = results[tn] || (rawTn ? results[rawTn] : null);
+          if (resultObj) {
+            setCachedStatus(tn, resultObj);
+            if (rawTn && rawTn !== tn) setCachedStatus(rawTn, resultObj);
           } else {
             setCachedStatus(tn, { error: 'Không nhận được phản hồi từ SPX' });
           }
@@ -8829,6 +8945,7 @@ window.TrackingModule = (function() {
           setCachedStatus(tn, { error: err.message || 'Lỗi kiểm tra' });
         } finally {
           btn.classList.remove('spinning');
+          updateNavBadge();
           render();
         }
       });
@@ -8838,7 +8955,8 @@ window.TrackingModule = (function() {
     container.querySelectorAll('.tracking-spx-link').forEach(link => {
       link.addEventListener('click', (e) => {
         e.preventDefault();
-        const tn = link.dataset.tn;
+        const rawTn = link.dataset.tn;
+        const tn = typeof normalizeTrackingNumber === 'function' ? normalizeTrackingNumber(rawTn) : String(rawTn || '').trim();
         if (tn) {
           window.open('https://spx.vn/tracking?tracking_number=' + encodeURIComponent(tn), '_blank');
         }
@@ -8850,7 +8968,8 @@ window.TrackingModule = (function() {
 
   // --- Render 1 card vận đơn ---
   function renderTrackingCard(tx, cached) {
-    const tn = String(tx.trackingNumber || '').trim();
+    const rawTn = String(tx.trackingNumber || '').trim();
+    const tn = (typeof normalizeTrackingNumber === 'function' ? normalizeTrackingNumber(rawTn) : '') || rawTn;
     let statusHtml = '';
     let timeHtml = '';
     let locationHtml = '';
@@ -8966,7 +9085,7 @@ window.TrackingModule = (function() {
       });
 
       // Lọc trùng mã vận đơn
-      const uniqueTns = [...new Set(toRefreshTxs.map(tx => String(tx.trackingNumber).trim()))].filter(Boolean);
+      const uniqueTns = [...new Set(toRefreshTxs.map(tx => typeof normalizeTrackingNumber === 'function' ? normalizeTrackingNumber(tx.trackingNumber) : String(tx.trackingNumber).trim()))].filter(Boolean);
 
       let successCount = 0;
       let errorCount = 0;
