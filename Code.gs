@@ -154,6 +154,7 @@ function doPost(e) {
       case "deleteAffiliateUploadLog":result = deleteAffiliateUploadLog(body.data); break;
       case "saveTaxConfig":          result = saveTaxConfig(body.data); break;
       case "getTaxConfig":           result = getTaxConfig(); break;
+      case "askGeminiAI":            result = askGeminiAI(body.data); break;
       default: result = { error: "Unknown action: " + action };
     }
   } catch (err) {
@@ -1323,3 +1324,104 @@ function getTaxConfig() {
   rows.forEach(r => { if (r.key) config[String(r.key)] = String(r.value || ""); });
   return { ok: true, config: config };
 }
+
+// ─── Gemini AI Proxy ────────────────────────────────────────────────────────
+function askGeminiAI(data) {
+  if (!data || !data.question) return { error: "Thiếu câu hỏi" };
+  if (!data.apiKey) return { error: "Chưa cấu hình API Key Gemini" };
+  
+  let prompt = "";
+  if (data.previousText) {
+    prompt = `Đây là đoạn văn bản bạn vừa viết nhưng bị cắt ngang: 
+    "${data.previousText}"
+    
+    HÃY VIẾT TIẾP đoạn văn bản này. Giữ nguyên văn phong và mạch văn. TUYỆT ĐỐI KHÔNG chào hỏi lại, KHÔNG giải thích lại từ đầu, KHÔNG lặp lại đoạn cũ. Chỉ viết nối tiếp phần còn dang dở.`;
+  } else {
+    prompt = `Bạn là một trợ lý dữ liệu kiêm cố vấn kinh doanh mô hình xe 1:64.
+    
+    DỮ LIỆU CỬA HÀNG:
+    ${data.context || 'Chưa có dữ liệu'}
+    
+    CÂU HỎI: 
+    ${data.question}
+    
+    QUY TẮC TRẢ LỜI (Phân loại câu hỏi):
+    1. NẾU câu hỏi là TRA CỨU ĐƠN GIẢN (ví dụ: "Top 3 xe bán chạy?", "Hôm nay bán được bao nhiêu?", "Kênh nào lãi nhất?"):
+       - Trả lời CỰC KỲ NGẮN GỌN (dưới 100 từ).
+       - Đi thẳng vào số liệu, dùng gạch đầu dòng. KHÔNG giải thích dài dòng.
+
+    2. NẾU câu hỏi là QUYẾT ĐỊNH KINH DOANH hoặc cần PHÂN TÍCH (ví dụ: "Có nên nhập SF90 giá 85k không?", "Nên xả xe nào?", "Dòng tiền có ổn không?"):
+       - PHÂN TÍCH SÂU (200-400 từ).
+       - So sánh với dữ liệu quá khứ (giá cũ, lợi nhuận cũ, tốc độ bán).
+       - Đưa ra khuyến nghị rõ ràng (Nên/Không nên, kèm lý do cụ thể).
+       - Có thể dùng gạch đầu dòng để dễ đọc.
+
+    3. LUÔN LUÔN: Xưng "Tôi", gọi "Bạn". Không chào hỏi xã giao.`;
+  }
+
+  // BƯỚC 1: Tự động lấy danh sách model khả dụng với API Key này
+  let availableModels = [];
+  try {
+    const listUrl = "https://generativelanguage.googleapis.com/v1beta/models?key=" + data.apiKey;
+    const listRes = UrlFetchApp.fetch(listUrl, { muteHttpExceptions: true });
+    const listJson = JSON.parse(listRes.getContentText());
+    
+    if (listJson.models && Array.isArray(listJson.models)) {
+      availableModels = listJson.models
+        .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes("generateContent"))
+        .map(m => m.name.replace("models/", "")); // Lấy tên model bỏ tiền tố "models/"
+    }
+  } catch (err) {
+    return { error: "Lỗi khi lấy danh sách model: " + err.message };
+  }
+
+  if (availableModels.length === 0) {
+    return { error: "API Key này không được cấp quyền dùng model nào hỗ trợ generateContent. Hãy kiểm tra lại key." };
+  }
+
+  // Ưu tiên các model có tên chứa "flash" hoặc "pro"
+  availableModels.sort((a, b) => {
+    const aScore = (a.includes("flash") ? 2 : 0) + (a.includes("latest") ? 1 : 0);
+    const bScore = (b.includes("flash") ? 2 : 0) + (b.includes("latest") ? 1 : 0);
+    return bScore - aScore;
+  });
+
+  let lastError = null;
+
+  // BƯỚC 2: Thử từng model trong danh sách khả dụng
+  for (const model of availableModels) {
+    try {
+      const url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + data.apiKey;
+      const options = {
+        method: "post",
+        contentType: "application/json",
+        payload: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            maxOutputTokens: 2000,
+            temperature: 0.4
+          }
+        }),
+        muteHttpExceptions: true
+      };
+      
+      const response = UrlFetchApp.fetch(url, options);
+      const json = JSON.parse(response.getContentText());
+      
+      if (json.error) {
+        lastError = json.error.message;
+        continue; // Thử model tiếp theo
+      }
+      
+      const text = json.candidates?.[0]?.content?.parts?.[0]?.text || "Không có phản hồi.";
+      return { ok: true, answer: text, model: model };
+      
+    } catch (err) {
+      lastError = err.message;
+      continue;
+    }
+  }
+  
+  return { error: "Đã thử tất cả " + availableModels.length + " model khả dụng nhưng đều thất bại. Lỗi cuối: " + lastError };
+}
+

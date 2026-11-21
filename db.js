@@ -347,7 +347,10 @@ function reconcileTransactions(localTxs, cloudTxs, pending) {
       const cloudTime = Number(cloudTx.updatedAt || 0);
       result.push(localTime > cloudTime ? localTx : cloudTx);
     } else if (localTx) {
-      result.push(localTx); // data-safety: never drop a local-only record silently
+      // Nếu có ở Local nhưng Cloud không có (và không nằm trong hàng đợi lưu pendingOps),
+      // chứng tỏ giao dịch này đã bị xóa trên Cloud hoặc trên thiết bị khác.
+      // Ghi nhận vào Tombstone để ngăn chặn hoàn toàn việc hồi sinh!
+      recordDeletedTxId(id);
     } else {
       result.push(cloudTx);
     }
@@ -389,8 +392,8 @@ function mergeStateFromCloud(cloudData) {
       }
       if (cloudMap.has(id)) {
         merged.push(cloudMap.get(id)); // no pending edit — cloud is the confirmed copy
-      } else if (localMap.has(id)) {
-        merged.push(localMap.get(id)); // data-safety: keep local-only portfolio
+      } else if (localMap.has(id) && id === "p-default") {
+        merged.push(localMap.get(id)); // data-safety: only keep default portfolio locally
       }
     });
 
@@ -497,44 +500,49 @@ function mergeStateFromCloud(cloudData) {
   if (cloudData.affiliate) {
     if (!state.affiliate) state.affiliate = { tiktok: [], shopee: [], uploads: [] };
 
+    const pendingAffiliateSaves = new Set(
+      ops.filter(op => op.action === "saveAffiliateItem" && op.data && op.data.item).map(op => {
+        const item = op.data.item;
+        return String(item.orderId || item.id || "") + "_" + String(item.skuId || item.productId || "0");
+      })
+    );
+
     // Merge TikTok: index by orderId_skuId
     if (Array.isArray(cloudData.affiliate.tiktok)) {
-      const localMap = new Map();
-      (state.affiliate.tiktok || []).forEach(item => {
-        const key = String(item.orderId || item.id || "") + "_" + String(item.skuId || item.productId || "0");
-        if (key === "_0") return; // skip invalid items
-        localMap.set(key, item);
-      });
+      const cloudMap = new Map();
       cloudData.affiliate.tiktok.forEach(cloudItem => {
         if (!cloudItem.orderId && !cloudItem.id) return; // skip items without identifier
         const key = String(cloudItem.orderId || cloudItem.id || "") + "_" + String(cloudItem.skuId || cloudItem.productId || "0");
-        const localItem = localMap.get(key);
-        if (!localItem || (cloudItem.updatedAt || 0) >= (localItem.updatedAt || 0)) {
-          localMap.set(key, cloudItem);
+        cloudMap.set(key, cloudItem);
+      });
+      // Chỉ giữ lại local item nếu đang có lệnh save chờ gửi lên Cloud
+      (state.affiliate.tiktok || []).forEach(localItem => {
+        const key = String(localItem.orderId || localItem.id || "") + "_" + String(localItem.skuId || localItem.productId || "0");
+        if (pendingAffiliateSaves.has(key) && !cloudMap.has(key)) {
+          cloudMap.set(key, localItem);
         }
       });
-      state.affiliate.tiktok = Array.from(localMap.values());
+      state.affiliate.tiktok = Array.from(cloudMap.values());
     }
 
     // Merge Shopee: index by id
     if (Array.isArray(cloudData.affiliate.shopee)) {
-      const localMap = new Map();
-      (state.affiliate.shopee || []).forEach(item => localMap.set(item.id, item));
+      const cloudMap = new Map();
       cloudData.affiliate.shopee.forEach(cloudItem => {
-        const localItem = localMap.get(cloudItem.id);
-        if (!localItem || (cloudItem.updatedAt || 0) >= (localItem.updatedAt || 0)) {
-          localMap.set(cloudItem.id, cloudItem);
+        if (cloudItem.id) cloudMap.set(cloudItem.id, cloudItem);
+      });
+      // Chỉ giữ lại local item nếu đang có lệnh save chờ gửi lên Cloud
+      (state.affiliate.shopee || []).forEach(localItem => {
+        if (localItem.id && pendingAffiliateSaves.has(String(localItem.id)) && !cloudMap.has(localItem.id)) {
+          cloudMap.set(localItem.id, localItem);
         }
       });
-      state.affiliate.shopee = Array.from(localMap.values());
+      state.affiliate.shopee = Array.from(cloudMap.values());
     }
 
     // Merge Uploads
-    if (Array.isArray(cloudData.affiliate.uploads) && cloudData.affiliate.uploads.length > 0) {
-      const upMap = new Map();
-      (state.affiliate.uploads || []).forEach(u => upMap.set(u.uploadId, u));
-      cloudData.affiliate.uploads.forEach(u => upMap.set(u.uploadId, u));
-      state.affiliate.uploads = Array.from(upMap.values());
+    if (Array.isArray(cloudData.affiliate.uploads)) {
+      state.affiliate.uploads = cloudData.affiliate.uploads;
     }
   }
 

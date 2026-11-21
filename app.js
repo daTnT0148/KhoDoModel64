@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 1:64 Model Car Portfolio Tracker - Core Application Logic
  * Đăng ký và xử lý toàn bộ logic tính toán tài chính, vẽ biểu đồ, quản lý kho hàng,
  * tự động gợi ý tên xe, xuất nhập CSV và lưu trữ cục bộ LocalStorage.
@@ -75,7 +75,8 @@ let charts = {
   yoyChart: null,
   yoyReportChart: null,
   channelChart: null,
-  brandChart: null
+  brandChart: null,
+  monthlyRevenueChart: null
 };
 
 
@@ -907,15 +908,40 @@ function calculateKPIs(inventory, portfolioId) {
   const realizedProfit = totalRevenue - totalCOGS - totalReturnLoss;
   const roi = totalCOGS > 0 ? (realizedProfit / totalCOGS) * 100 : 0;
 
+  // Tính tổng doanh thu Affiliate (toàn bộ các sàn hiện tại & tương lai)
+  let totalAffiliateRevenue = 0;
+  if (state.affiliate) {
+    Object.keys(state.affiliate).forEach(platform => {
+      if (platform === 'uploads') return;
+      const items = state.affiliate[platform];
+      if (!Array.isArray(items)) return;
+      items.forEach(item => {
+        const netAmt = Number(item.totalNetCommission || item.netCommission || item.grossCommission || 0);
+        if (netAmt > 0) totalAffiliateRevenue += netAmt;
+      });
+    });
+  }
+
+  // Dòng tiền (Cash Flow):
+  // Tiền vào = Tiền thu từ bán xe + Tiền hoa hồng Affiliate
+  // Tiền ra = Tiền đã chi mua xe (totalCost) + Chi phí trả hàng (totalReturnLoss)
+  const cashIn = totalRevenue + totalAffiliateRevenue;
+  const cashOut = totalCost + totalReturnLoss;
+  const netCashFlow = cashIn - cashOut;
+
   return {
     totalInventoryValue,
     totalCost,
     totalRevenue,
+    totalAffiliateRevenue,
     totalReturnLoss,
     realizedProfit,
     roi,
     stockCount,
-    soldCount
+    soldCount,
+    cashIn,
+    cashOut,
+    netCashFlow
   };
 }
 
@@ -1025,32 +1051,482 @@ function calculateYearlyStats(portfolioId, inventoryList) {
 
 // --- LOGIC HIỂN THỊ GIAO DIỆN (UI RENDERING) ---
 
-// Cập nhật các thẻ chỉ số KPI ở Dashboard
+// Cập nhật các thẻ chỉ số KPI ở Dashboard (4 thẻ Cockpit cốt lõi)
 function renderKPIs(kpis) {
-  document.getElementById("val-total-inventory").innerText = formatCurrency(kpis.totalInventoryValue);
-  document.getElementById("sub-total-inventory").innerText = `Tổng số lượng tồn: ${kpis.stockCount} chiếc xe`;
+  // 1. Giá trị kho hiện tại
+  const invEl = document.getElementById("val-total-inventory");
+  if (invEl) invEl.innerText = formatCurrency(kpis.totalInventoryValue);
+  const subInv = document.getElementById("sub-total-inventory");
+  if (subInv) subInv.innerHTML = `Tổng tồn kho: <strong style="color:var(--primary);">${kpis.stockCount} chiếc xe</strong>`;
   
-  document.getElementById("val-total-cost").innerText = formatCurrency(kpis.totalCost);
-  
-  document.getElementById("val-total-revenue").innerText = formatCurrency(kpis.totalRevenue);
-  document.getElementById("sub-total-revenue").innerText = `Tổng đã bán: ${kpis.soldCount} chiếc xe`;
-  
-  const profitEl = document.getElementById("val-net-profit");
-  profitEl.innerText = formatCurrency(kpis.realizedProfit);
-  
-  if (kpis.realizedProfit >= 0) {
-    profitEl.className = "kpi-value text-green";
-  } else {
-    profitEl.className = "kpi-value text-danger";
+  // 2. Tổng doanh thu (Bán xe + Affiliate)
+  const affRev = kpis.totalAffiliateRevenue || 0;
+  const grandTotalRev = kpis.totalRevenue + affRev;
+  const revEl = document.getElementById("val-total-revenue");
+  if (revEl) revEl.innerText = formatCurrency(grandTotalRev);
+  const subRev = document.getElementById("sub-total-revenue");
+  if (subRev) {
+    if (affRev > 0) {
+      subRev.innerHTML = `Bán xe: <strong>${formatCurrency(kpis.totalRevenue)}</strong> · Aff: <strong style="color:var(--green);">${formatCurrency(affRev)}</strong>`;
+    } else {
+      subRev.innerHTML = `Đã bán: <strong style="color:var(--green);">${kpis.soldCount} chiếc xe</strong>`;
+    }
   }
-  document.getElementById("sub-net-profit").innerText = `Tỷ suất ROI thực tế: ${kpis.roi.toFixed(1)}%`;
 
-  // Trả hàng: tổng khoản lỗ kèm theo (ship, bao bì hỏng...) đã trừ vào lợi nhuận ròng ở trên
-  const returnLossEl = document.getElementById("val-return-loss");
-  if (returnLossEl) {
-    returnLossEl.innerText = formatCurrency(kpis.totalReturnLoss || 0);
+  // 3. Lợi nhuận ròng
+  const profitEl = document.getElementById("val-net-profit");
+  if (profitEl) {
+    profitEl.innerText = formatCurrency(kpis.realizedProfit);
+    if (kpis.realizedProfit >= 0) {
+      profitEl.className = "kpi-value text-green";
+    } else {
+      profitEl.className = "kpi-value text-danger";
+    }
   }
+  const subProfit = document.getElementById("sub-net-profit");
+  if (subProfit) subProfit.innerHTML = `Tỷ suất ROI thực tế: <strong style="color:var(--orange);">${kpis.roi.toFixed(1)}%</strong>`;
+
+  // 4. Dòng tiền hiện tại (Net Cash Flow = Tiền vào - Tiền ra)
+  const cfEl = document.getElementById("val-net-cash-flow");
+  if (cfEl) {
+    const netCF = kpis.netCashFlow || 0;
+    const sign = netCF > 0 ? "+" : "";
+    cfEl.innerText = `${sign}${formatCurrency(netCF)}`;
+    cfEl.className = `kpi-value ${netCF >= 0 ? "text-green" : "text-danger"}`;
+  }
+  const subCF = document.getElementById("sub-net-cash-flow");
+  if (subCF) {
+    subCF.innerHTML = `Thu: <strong style="color:var(--green);">${formatCurrency(kpis.cashIn || 0)}</strong> · Chi: <strong style="color:var(--danger);">${formatCurrency(kpis.cashOut || 0)}</strong>`;
+  }
+
+  // Fallback an toàn nếu còn gọi ở nơi khác
+  const costEl = document.getElementById("val-total-cost");
+  if (costEl) costEl.innerText = formatCurrency(kpis.totalCost);
+  const returnLossEl = document.getElementById("val-return-loss");
+  if (returnLossEl) returnLossEl.innerText = formatCurrency(kpis.totalReturnLoss || 0);
 }
+
+// ================= COCKPIT DASHBOARD: CẢNH BÁO, VIỆC CẦN LÀM & TRỢ LÝ TÀI CHÍNH =================
+
+// 1. Khung cảnh báo thông minh (Smart Alerts)
+function renderSmartAlerts(inventory, kpis) {
+  const container = document.getElementById("smartAlertsContainer");
+  if (!container) return;
+
+  const alerts = [];
+  const today = new Date();
+
+  // (1) Kiểm tra xe tồn > 60 ngày
+  const stagnantItems = (inventory || [])
+    .filter(item => item.stock > 0)
+    .map(item => {
+      const firstBuyDate = item.oldestStockDate || today;
+      const days = Math.floor((today - firstBuyDate) / 86400000);
+      return { ...item, days };
+    })
+    .filter(item => item.days >= 60)
+    .sort((a, b) => b.days - a.days);
+
+  if (stagnantItems.length > 0) {
+    const sampleNames = stagnantItems.slice(0, 2).map(i => i.modelName).join(", ");
+    const moreTxt = stagnantItems.length > 2 ? ` và ${stagnantItems.length - 2} mẫu khác` : "";
+    alerts.push({
+      type: "warning",
+      icon: "alert-triangle",
+      title: "Cảnh báo hàng tồn đọng lâu ngày",
+      message: `Có <strong>${stagnantItems.length} mẫu xe</strong> tồn kho trên 60 ngày (${sampleNames}${moreTxt} - tồn cao nhất: ${stagnantItems[0].days} ngày). Cân nhắc xả hàng hoặc chạy khuyến mãi.`,
+      actionBtn: `<button type="button" class="btn btn-sm btn-secondary" onclick="navigateToInventoryTab('slow')"><i data-lucide="arrow-right"></i> Xem xe tồn lâu</button>`
+    });
+  }
+
+  // (2) Kiểm tra dòng tiền âm
+  const netCF = kpis.netCashFlow || 0;
+  if (netCF < 0) {
+    alerts.push({
+      type: "danger",
+      icon: "alert-circle",
+      title: "Cảnh báo dòng tiền âm",
+      message: `Dòng tiền tổng thể đang âm <strong>${formatCurrency(Math.abs(netCF))}</strong> (Thu: ${formatCurrency(kpis.cashIn || 0)} · Chi: ${formatCurrency(kpis.cashOut || 0)}). Cần thận trọng khi giải ngân mua thêm hàng mới.`,
+      actionBtn: `<button type="button" class="btn btn-sm btn-secondary" onclick="navigateToTransactionsTab()"><i data-lucide="wallet"></i> Xem chi tiết thu chi</button>`
+    });
+  }
+
+  // (3) Kiểm tra kênh bán hàng có lợi nhuận âm
+  const txs = (state.transactions && state.transactions[state.activePortfolioId]) || [];
+  const channelProfits = {};
+  txs.forEach(tx => {
+    const ch = tx.channel || "Trực tiếp";
+    if (!channelProfits[ch]) channelProfits[ch] = { rev: 0, cogs: 0, loss: 0 };
+    const price = parseFloat(String(tx.unitPrice || '0').replace(/[^0-9.-]+/g, '')) || 0;
+    const qty = Number(tx.qty) || 0;
+    const fifoCost = Number(tx.fifoAvgCost) || 0;
+    if (tx.type === "sell") {
+      channelProfits[ch].rev += price * qty;
+      channelProfits[ch].cogs += fifoCost * qty;
+    } else if (tx.type === "return_sell") {
+      channelProfits[ch].rev -= price * qty;
+      channelProfits[ch].loss += Number(tx.returnLoss) || 0;
+    }
+  });
+  const lossChannels = Object.keys(channelProfits).filter(ch => {
+    const cp = channelProfits[ch];
+    return cp.rev > 0 && (cp.rev - cp.cogs - cp.loss) < 0;
+  });
+
+  if (lossChannels.length > 0) {
+    alerts.push({
+      type: "danger",
+      icon: "alert-octagon",
+      title: "Kênh bán ghi nhận lỗ",
+      message: `Kênh bán <strong>${lossChannels.join(", ")}</strong> đang ghi nhận lợi nhuận âm sau khi trừ giá vốn và chi phí hoàn đơn. Cần rà soát lại mức phí hoặc giá bán.`,
+      actionBtn: `<button type="button" class="btn btn-sm btn-secondary" onclick="const c=document.getElementById('dashboardChannelCard');if(c)c.scrollIntoView({behavior:'smooth'})"><i data-lucide="pie-chart"></i> Xem kênh</button>`
+    });
+  }
+
+  // (4) Kiểm tra tồn kho > 50% vốn
+  const workingCapital = (kpis.cashIn || 0) + (kpis.totalInventoryValue || 0);
+  const invRatio = workingCapital > 0 ? (kpis.totalInventoryValue / workingCapital) * 100 : 0;
+  if (kpis.totalInventoryValue > 0 && (invRatio > 50 || (kpis.totalCost > 0 && kpis.totalInventoryValue > kpis.totalCost * 0.5))) {
+    const pctTxt = invRatio > 0 ? `${invRatio.toFixed(0)}%` : ">50%";
+    alerts.push({
+      type: "warning",
+      icon: "boxes",
+      title: "Tỷ trọng vốn tồn kho cao",
+      message: `Hàng tồn kho hiện chiếm <strong>${pctTxt}</strong> tổng dòng vốn (${formatCurrency(kpis.totalInventoryValue)}). Nguy cơ đọng vốn, nên đẩy nhanh tốc độ quay vòng hàng.`,
+      actionBtn: `<button type="button" class="btn btn-sm btn-secondary" onclick="navigateToInventoryTab()"><i data-lucide="box"></i> Quản lý kho</button>`
+    });
+  }
+
+  // (5) Kiểm tra đơn hàng SPX gặp sự cố / hoàn về
+  let failedCount = 0;
+  try {
+    const elRed = document.getElementById('dotCountFailed');
+    if (elRed && elRed.textContent) {
+      failedCount = parseInt(elRed.textContent.trim(), 10) || 0;
+    }
+  } catch (_) {
+    failedCount = 0;
+  }
+  if (failedCount > 0) {
+    alerts.push({
+      type: "danger",
+      icon: "truck",
+      title: "Sự cố giao vận SPX",
+      message: `Có <strong>${failedCount} đơn hàng SPX</strong> đang trên đường hoàn về hoặc giao thất bại.`,
+      actionBtn: `<button type="button" class="btn btn-sm btn-secondary" onclick="navigateToTrackingTab()"><i data-lucide="arrow-right"></i> Kiểm tra vận đơn</button>`
+    });
+  }
+
+  // Render HTML
+  if (alerts.length === 0) {
+    container.innerHTML = `
+      <div class="smart-alert-item success">
+        <i data-lucide="shield-check" class="smart-alert-icon"></i>
+        <div class="smart-alert-content">
+          <div class="smart-alert-title">Cockpit Hoạt Động Bình Thường</div>
+          <div class="smart-alert-msg">Tất cả chỉ số tài chính đều ổn định · Dòng tiền an toàn · Không phát hiện xe tồn kho quá hạn (> 60 ngày).</div>
+        </div>
+      </div>
+    `;
+  } else {
+    container.innerHTML = alerts.map(a => `
+      <div class="smart-alert-item ${a.type}">
+        <i data-lucide="${a.icon}" class="smart-alert-icon"></i>
+        <div class="smart-alert-content">
+          <div class="smart-alert-title">${a.title}</div>
+          <div class="smart-alert-msg">${a.message}</div>
+        </div>
+        ${a.actionBtn ? `<div class="smart-alert-actions">${a.actionBtn}</div>` : ''}
+      </div>
+    `).join("");
+  }
+
+  if (window.lucide) lucide.createIcons();
+}
+
+// 2. Khung Top 3 việc cần làm hôm nay (Top Actions)
+function renderTopActions(inventory, kpis) {
+  const list = document.getElementById("topActionsList");
+  if (!list) return;
+
+  const today = new Date();
+  const actions = [];
+
+  // Việc 1: Xả hàng nếu có xe tồn > 60 ngày
+  const stagnantItems = (inventory || [])
+    .filter(item => item.stock > 0)
+    .map(item => {
+      const firstBuyDate = item.oldestStockDate || today;
+      const days = Math.floor((today - firstBuyDate) / 86400000);
+      return { ...item, days };
+    })
+    .filter(item => item.days >= 60)
+    .sort((a, b) => b.days - a.days);
+
+  if (stagnantItems.length > 0) {
+    const topStagnant = stagnantItems[0];
+    actions.push({
+      icon: "trending-down",
+      title: `Xả ${stagnantItems.length} mẫu xe tồn > 60 ngày`,
+      desc: `Ưu tiên thanh lý: <strong>${topStagnant.modelName}</strong> (tồn ${topStagnant.days} ngày, SL: ${topStagnant.stock}).`,
+      btnText: "Xả hàng ngay",
+      btnAction: "navigateToInventoryTab('slow')"
+    });
+  } else {
+    actions.push({
+      icon: "boxes",
+      title: "Rà soát định kỳ danh mục kho",
+      desc: `Kho hiện có ${kpis.stockCount} chiếc xe, tổng giá trị ${formatCurrency(kpis.totalInventoryValue)}.`,
+      btnText: "Xem kho",
+      btnAction: "navigateToInventoryTab()"
+    });
+  }
+
+  // Việc 2: Nhập thêm xe bán chạy hoặc Tái đầu tư
+  const lowStockFastSeller = (inventory || []).find(item => item.totalSold >= 2 && item.stock <= 2);
+  if (lowStockFastSeller) {
+    actions.push({
+      icon: "shopping-cart",
+      title: `Nhập thêm mẫu bán chạy: ${lowStockFastSeller.modelName}`,
+      desc: `Đã bán <strong>${lowStockFastSeller.totalSold} xe</strong>, kho chỉ còn <strong>${lowStockFastSeller.stock} xe</strong>.`,
+      btnText: "Nhập thêm",
+      btnAction: `prefillBuyOrder('${encodeURIComponent(lowStockFastSeller.modelName)}')`
+    });
+  } else if ((kpis.netCashFlow || 0) > 0) {
+    actions.push({
+      icon: "repeat",
+      title: `Tái đầu tư dòng tiền (+${formatCurrency(kpis.netCashFlow)})`,
+      desc: `Dòng tiền dương dồi dào, giải ngân an toàn ~50% lợi nhuận vào các mẫu xe hot có thanh khoản cao.`,
+      btnText: "Tạo đơn mua",
+      btnAction: "navigateToTransactionsTab('buy')"
+    });
+  } else {
+    actions.push({
+      icon: "tag",
+      title: "Tối ưu hóa chi phí nhập hàng",
+      desc: `Tìm nguồn hàng giá tốt để nâng biên lợi nhuận (ROI hiện tại: ${kpis.roi.toFixed(1)}%).`,
+      btnText: "Nhập hàng",
+      btnAction: "navigateToTransactionsTab('buy')"
+    });
+  }
+
+  // Việc 3: Kiểm tra SPX hoặc Đối soát Affiliate
+  let activeSPX = 0;
+  try {
+    const elYellow = document.getElementById('dotCountActive');
+    if (elYellow && elYellow.textContent) {
+      activeSPX = parseInt(elYellow.textContent.trim(), 10) || 0;
+    }
+  } catch (_) {
+    activeSPX = 0;
+  }
+  if (activeSPX > 0) {
+    actions.push({
+      icon: "truck",
+      title: `Kiểm tra ${activeSPX} vận đơn SPX đang giao`,
+      desc: `Theo dõi tiến độ giao hàng để xử lý kịp thời các phát sinh và hạn chế bị hoàn đơn.`,
+      btnText: "Kiểm tra ngay",
+      btnAction: "navigateToTrackingTab()"
+    });
+  } else {
+    actions.push({
+      icon: "share-2",
+      title: "Đối soát hoa hồng Affiliate & sàn",
+      desc: `Cập nhật báo cáo đối soát từ Shopee & TikTok Affiliate để đồng bộ doanh thu chuẩn xác.`,
+      btnText: "Vào Affiliate",
+      btnAction: "navigateToAffiliateTab()"
+    });
+  }
+
+  list.innerHTML = actions.map(act => `
+    <div class="top-action-item">
+      <div class="action-item-icon">
+        <i data-lucide="${act.icon}"></i>
+      </div>
+      <div class="action-item-content">
+        <div class="action-item-title">${act.title}</div>
+        <div class="action-item-desc">${act.desc}</div>
+      </div>
+      <button type="button" class="action-item-btn" onclick="${act.btnAction}">
+        ${act.btnText} <i data-lucide="chevron-right"></i>
+      </button>
+    </div>
+  `).join("");
+
+  if (window.lucide) lucide.createIcons();
+}
+
+// 3. Trợ lý tài chính thông minh (Heuristic Financial Assistant)
+function renderFinancialAssistant(inventory, kpis) {
+  const answerBox = document.getElementById("assistantAnswerBox");
+  if (!answerBox) return;
+
+  const netCF = kpis.netCashFlow || 0;
+  const workingCapital = (kpis.cashIn || 0) + (kpis.totalInventoryValue || 0);
+  const invRatio = workingCapital > 0 ? (kpis.totalInventoryValue / workingCapital) * 100 : 0;
+
+  // Câu 1: Có nên nhập thêm hàng?
+  let reinvestAnswer = "";
+  if (netCF > 0 && invRatio <= 50) {
+    const safeReinvest = Math.round(Math.max(0, kpis.realizedProfit) * 0.5);
+    reinvestAnswer = `
+      <div style="font-weight: 700; color: #34d399; margin-bottom: 4px;">
+        <i data-lucide="check-circle" style="width:15px;height:15px;display:inline-block;vertical-align:middle;"></i> NÊN NHẬP THÊM HÀNG (Điều kiện thuận lợi)
+      </div>
+      <div>Dòng tiền ròng đang dương <strong>+${formatCurrency(netCF)}</strong> và tỷ trọng kho ở mức an toàn (<strong>${invRatio.toFixed(0)}%</strong> vốn). Bạn có thể giải ngân an toàn tối đa <strong>${formatCurrency(safeReinvest)}</strong> (50% lợi nhuận) cho các mẫu xe Porsche hoặc xe bán chạy.</div>
+    `;
+  } else if (netCF > 0 && invRatio > 50) {
+    reinvestAnswer = `
+      <div style="font-weight: 700; color: #fbbf24; margin-bottom: 4px;">
+        <i data-lucide="alert-triangle" style="width:15px;height:15px;display:inline-block;vertical-align:middle;"></i> CÂN NHẮC CHỌN LỌC (Tồn kho đang cao)
+      </div>
+      <div>Dòng tiền dương (+${formatCurrency(netCF)}) nhưng hàng tồn đang chiếm tới <strong>${invRatio.toFixed(0)}%</strong> vốn (${formatCurrency(kpis.totalInventoryValue)}). Chỉ nên nhập thêm khi có đơn đặt trước hoặc mẫu xe cực hot; ưu tiên xả bớt các mẫu tồn lâu.</div>
+    `;
+  } else {
+    reinvestAnswer = `
+      <div style="font-weight: 700; color: #f87171; margin-bottom: 4px;">
+        <i data-lucide="x-circle" style="width:15px;height:15px;display:inline-block;vertical-align:middle;"></i> TẠM HOÃN NHẬP MỚI (Ưu tiên thu hồi dòng tiền)
+      </div>
+      <div>Dòng tiền hiện tại đang âm <strong>${formatCurrency(Math.abs(netCF))}</strong>. Chưa nên chi tiêu vốn mới vào lúc này. Hãy tập trung xả hàng tồn kho và thu hồi công nợ/hoa hồng để đưa dòng tiền về trạng thái dương trước.</div>
+    `;
+  }
+
+  // Câu 2: Sức khỏe dòng tiền?
+  let cashflowAnswer = "";
+  const sign = netCF >= 0 ? "+" : "-";
+  const cfStatus = netCF >= 0 ? "Khỏe mạnh & Dương" : "Cần lưu ý (Âm)";
+  const cfColor = netCF >= 0 ? "#34d399" : "#f87171";
+  cashflowAnswer = `
+    <div style="font-weight: 700; color: ${cfColor}; margin-bottom: 4px;">
+      <i data-lucide="activity" style="width:15px;height:15px;display:inline-block;vertical-align:middle;"></i> TRẠNG THÁI DÒNG TIỀN: ${cfStatus.toUpperCase()}
+    </div>
+    <div>Tổng tiền vào: <strong>${formatCurrency(kpis.cashIn || 0)}</strong> · Tổng tiền ra: <strong>${formatCurrency(kpis.cashOut || 0)}</strong> · Dòng tiền ròng: <strong style="color:${cfColor};">${sign}${formatCurrency(Math.abs(netCF))}</strong>. Lợi nhuận thực tế đạt <strong>${formatCurrency(kpis.realizedProfit)}</strong> (ROI: ${kpis.roi.toFixed(1)}%). Biên an toàn vốn ở mức ${netCF >= 0 ? 'rất tốt' : 'thấp'}.</div>
+  `;
+
+  // Câu 3: Kênh nào sinh lời nhất?
+  let channelAnswer = "";
+  const txs = (state.transactions && state.transactions[state.activePortfolioId]) || [];
+  const chStats = {};
+  txs.forEach(tx => {
+    const ch = tx.channel || "Trực tiếp";
+    if (!chStats[ch]) chStats[ch] = { rev: 0, profit: 0 };
+    const price = parseFloat(String(tx.unitPrice || '0').replace(/[^0-9.-]+/g, '')) || 0;
+    const qty = Number(tx.qty) || 0;
+    const fifoCost = Number(tx.fifoAvgCost) || 0;
+    if (tx.type === "sell") {
+      chStats[ch].rev += price * qty;
+      chStats[ch].profit += (price - fifoCost) * qty;
+    } else if (tx.type === "return_sell") {
+      chStats[ch].rev -= price * qty;
+      chStats[ch].profit -= (price - fifoCost) * qty + (Number(tx.returnLoss) || 0);
+    }
+  });
+
+  let affTotal = 0;
+  if (state.affiliate) {
+    Object.keys(state.affiliate).forEach(platform => {
+      if (platform === 'uploads') return;
+      const items = state.affiliate[platform];
+      if (Array.isArray(items)) {
+        items.forEach(it => {
+          affTotal += Number(it.totalNetCommission || it.netCommission || it.grossCommission || 0);
+        });
+      }
+    });
+  }
+  if (affTotal > 0) {
+    chStats["Affiliate"] = { rev: affTotal, profit: affTotal };
+  }
+
+  const sortedChannels = Object.keys(chStats).sort((a, b) => chStats[b].profit - chStats[a].profit);
+  if (sortedChannels.length > 0 && chStats[sortedChannels[0]].rev > 0) {
+    const topCh = sortedChannels[0];
+    const topProfit = chStats[topCh].profit;
+    const topRev = chStats[topCh].rev;
+    channelAnswer = `
+      <div style="font-weight: 700; color: #38bdf8; margin-bottom: 4px;">
+        <i data-lucide="award" style="width:15px;height:15px;display:inline-block;vertical-align:middle;"></i> KÊNH HIỆU QUẢ NHẤT: ${topCh.toUpperCase()}
+      </div>
+      <div>Kênh <strong>${topCh}</strong> dẫn đầu với doanh thu <strong>${formatCurrency(topRev)}</strong> và lợi nhuận ròng <strong>${formatCurrency(topProfit)}</strong>. ${sortedChannels.length > 1 ? `Kênh đứng thứ 2 là <strong>${sortedChannels[1]}</strong> (${formatCurrency(chStats[sortedChannels[1]].profit)}).` : ''} Khuyến nghị tiếp tục ưu tiên nguồn hàng cho ${topCh}.</div>
+    `;
+  } else {
+    channelAnswer = `
+      <div style="font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">
+        <i data-lucide="info" style="width:15px;height:15px;display:inline-block;vertical-align:middle;"></i> ĐANG TÍCH LŨY DỮ LIỆU KÊNH
+      </div>
+      <div>Chưa có đủ số liệu giao dịch bán hàng để phân tích xếp hạng hiệu quả từng kênh. Dữ liệu sẽ tự động hiển thị sau các đơn hàng đầu tiên.</div>
+    `;
+  }
+
+  window._assistantAnswers = {
+    reinvest: reinvestAnswer,
+    cashflow: cashflowAnswer,
+    channel: channelAnswer
+  };
+
+  const activeChip = document.querySelector(".assistant-chip.active");
+  const currentQ = activeChip ? activeChip.getAttribute("data-q") : "reinvest";
+  answerBox.innerHTML = window._assistantAnswers[currentQ] || reinvestAnswer;
+  if (window.lucide) lucide.createIcons();
+}
+
+// Thiết lập chuyển đổi câu hỏi trợ lý
+function setupAssistantChips() {
+  const container = document.getElementById("assistantChips");
+  if (!container) return;
+  container.addEventListener("click", (e) => {
+    const chip = e.target.closest(".assistant-chip");
+    if (!chip) return;
+    container.querySelectorAll(".assistant-chip").forEach(c => c.classList.remove("active"));
+    chip.classList.add("active");
+    const q = chip.getAttribute("data-q");
+    const answerBox = document.getElementById("assistantAnswerBox");
+    if (answerBox && window._assistantAnswers && window._assistantAnswers[q]) {
+      answerBox.innerHTML = window._assistantAnswers[q];
+      if (window.lucide) lucide.createIcons();
+    }
+  });
+}
+
+// 4. Các hàm điều hướng nhanh từ Cockpit Action Card
+window.navigateToInventoryTab = function(filter) {
+  const invLink = document.querySelector('.nav-link[data-tab="inventory"]');
+  if (invLink) invLink.click();
+  if (filter === 'slow') {
+    setTimeout(() => {
+      const slowCard = document.getElementById('slowModelsCard');
+      if (slowCard) slowCard.scrollIntoView({ behavior: 'smooth' });
+    }, 150);
+  }
+};
+
+window.navigateToTrackingTab = function() {
+  const trackLink = document.querySelector('.nav-link[data-tab="tracking"]');
+  if (trackLink) trackLink.click();
+};
+
+window.navigateToTransactionsTab = function(type) {
+  const txLink = document.querySelector('.nav-link[data-tab="transactions"]');
+  if (txLink) txLink.click();
+};
+
+window.navigateToAffiliateTab = function() {
+  const affLink = document.querySelector('.nav-link[data-tab="affiliate"]');
+  if (affLink) affLink.click();
+};
+
+window.prefillBuyOrder = function(encodedModel) {
+  const model = decodeURIComponent(encodedModel || '');
+  const txTabLink = document.querySelector('.nav-link[data-tab="transactions"]');
+  if (txTabLink) txTabLink.click();
+  setTimeout(() => {
+    const buyInput = document.getElementById('buyModelName');
+    if (buyInput) {
+      buyInput.value = model;
+      buyInput.focus();
+    }
+  }, 120);
+};
 
 // Nạp danh sách các danh mục vào phần chọn
 function renderPortfolioSelectors() {
@@ -2095,6 +2571,170 @@ function updateYearlyRevenueKPI() {
   }
 }
 
+// Biểu đồ cột Doanh thu theo tháng (12 tháng gần nhất) + Dự báo tháng tới (MA-3)
+function drawMonthlyRevenueChart(portfolioId) {
+  const canvas = document.getElementById("monthlyRevenueChart");
+  if (!canvas) return;
+  if (typeof Chart === "undefined") return;
+  const ctx = canvas.getContext("2d");
+  if (charts.monthlyRevenueChart) {
+    try { charts.monthlyRevenueChart.destroy(); } catch (_) {}
+    charts.monthlyRevenueChart = null;
+  }
+
+  const now = new Date();
+  const months = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    months.push({
+      key: `${yyyy}-${mm}`,
+      label: `T${d.getMonth() + 1}/${String(yyyy).slice(-2)}`,
+      sales: 0,
+      aff: 0,
+      total: 0
+    });
+  }
+
+  // 1. Doanh thu bán xe theo từng tháng
+  const txs = (state.transactions && state.transactions[portfolioId]) || [];
+  txs.forEach(tx => {
+    if (!tx.date) return;
+    const yyyymm = tx.date.substring(0, 7);
+    const m = months.find(item => item.key === yyyymm);
+    if (!m) return;
+    let finalPriceSource = tx.taxUnitPrice !== undefined && tx.taxUnitPrice !== null ? tx.taxUnitPrice : tx.unitPrice;
+    const price = parseFloat(String(finalPriceSource || "0").replace(/[^0-9.-]+/g, "")) || 0;
+    const qty = Number(tx.qty) || 1;
+    if (tx.type === "sell") {
+      m.sales += price * qty;
+    } else if (tx.type === "return_sell") {
+      m.sales -= price * qty;
+    }
+  });
+
+  // 2. Doanh thu Affiliate theo từng tháng (tất cả các sàn)
+  if (state.affiliate) {
+    Object.keys(state.affiliate).forEach(platform => {
+      if (platform === "uploads") return;
+      const items = state.affiliate[platform];
+      if (!Array.isArray(items)) return;
+      items.forEach(item => {
+        const itemDate = item.settlementDate || item.orderDate || "";
+        if (!itemDate) return;
+        const yyyymm = itemDate.substring(0, 7);
+        const m = months.find(x => x.key === yyyymm);
+        if (!m) return;
+        const netAmt = Number(item.totalNetCommission || item.netCommission || item.grossCommission || 0);
+        if (netAmt > 0) m.aff += netAmt;
+      });
+    });
+  }
+
+  // Tính tổng từng tháng
+  months.forEach(m => {
+    m.total = Math.max(0, m.sales) + m.aff;
+  });
+
+  // 3. Dự báo doanh thu tháng tới bằng mô hình Moving Average 3 tháng (MA-3)
+  const last3Months = months.slice(-3);
+  const sum3 = last3Months.reduce((acc, curr) => acc + curr.total, 0);
+  const forecastMA3 = Math.round(sum3 / 3);
+  const forecastEl = document.getElementById("val-forecast-next-month");
+  if (forecastEl) {
+    forecastEl.innerText = formatCurrency(forecastMA3);
+  }
+
+  // 4. Vẽ biểu đồ Chart.js
+  const labels = months.map(m => m.label);
+  const salesData = months.map(m => Math.max(0, m.sales));
+  const affData = months.map(m => m.aff);
+
+  charts.monthlyRevenueChart = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: "Bán xe",
+          data: salesData,
+          backgroundColor: "rgba(99, 102, 241, 0.82)",
+          hoverBackgroundColor: "rgba(99, 102, 241, 1)",
+          borderColor: "#6366f1",
+          borderWidth: 1,
+          borderRadius: 4
+        },
+        {
+          label: "Affiliate",
+          data: affData,
+          backgroundColor: "rgba(16, 185, 129, 0.82)",
+          hoverBackgroundColor: "rgba(16, 185, 129, 1)",
+          borderColor: "#10b981",
+          borderWidth: 1,
+          borderRadius: 4
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          stacked: true,
+          grid: { display: false },
+          ticks: {
+            color: "#9ca3af",
+            font: { family: "Outfit", size: 10 }
+          }
+        },
+        y: {
+          stacked: true,
+          grid: { color: "rgba(255, 255, 255, 0.05)" },
+          ticks: {
+            color: "#9ca3af",
+            font: { family: "Outfit", size: 10 },
+            callback: function(value) {
+              if (value >= 1000000) return (value / 1000000).toFixed(1) + "M";
+              if (value >= 1000) return (value / 1000).toFixed(0) + "k";
+              return value;
+            }
+          }
+        }
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: "top",
+          align: "end",
+          labels: {
+            color: "#9ca3af",
+            font: { family: "Outfit", size: 10 },
+            boxWidth: 10,
+            boxHeight: 10,
+            usePointStyle: true
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label: function(ctx) {
+              const val = ctx.parsed.y || 0;
+              return `${ctx.dataset.label}: ${formatCurrency(val)}`;
+            },
+            footer: function(items) {
+              let sum = 0;
+              items.forEach(it => { sum += (it.parsed.y || 0); });
+              return `Tổng tháng: ${formatCurrency(sum)}`;
+            }
+          }
+        }
+      }
+    }
+  });
+}
+window.drawMonthlyRevenueChart = drawMonthlyRevenueChart;
+window.renderMonthlyRevenueChart = drawMonthlyRevenueChart;
+
 // Biểu đồ cột "So sánh tài chính qua các năm" ở tab Báo cáo năm — Doanh thu / COGS / Lợi nhuận ròng
 function drawYoYReportChart(yearlyStats) {
   const canvas = document.getElementById("yoyReportChart");
@@ -2234,7 +2874,9 @@ function drawChannelChart(portfolioId) {
 
 // Biểu đồ cơ cấu hãng xe (Brand Allocation)
 function drawBrandChart(inventoryList) {
-  const ctx = document.getElementById("brandChart").getContext("2d");
+  const canvas = document.getElementById("brandChart");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
   if (charts.brandChart) charts.brandChart.destroy();
 
   const brandCounts = {};
@@ -2398,10 +3040,13 @@ function setupTabNavigation() {
   }
 
   // Tăng cường điều hướng từ Dashboard sang Kho
-  document.getElementById("goToInventoryBtn").addEventListener("click", () => {
-    const invLink = document.querySelector('.nav-link[data-tab="inventory"]');
-    if (invLink) invLink.click();
-  });
+  const goToInv = document.getElementById("goToInventoryBtn");
+  if (goToInv) {
+    goToInv.addEventListener("click", () => {
+      const invLink = document.querySelector('.nav-link[data-tab="inventory"]');
+      if (invLink) invLink.click();
+    });
+  }
 }
 
 // Thiết lập chuyển đổi qua lại giữa dạng Grid và dạng Bảng ở màn hình Kho
@@ -2411,19 +3056,23 @@ function setupInventoryViewToggle() {
   const tableContainer = document.getElementById("inventoryTableContainer");
   const gridContainer = document.getElementById("inventoryGridContainer");
 
-  tableBtn.addEventListener("click", () => {
-    tableBtn.classList.add("active");
-    gridBtn.classList.remove("active");
-    tableContainer.classList.remove("hidden");
-    gridContainer.classList.add("hidden");
-  });
+  if (tableBtn && tableContainer && gridContainer) {
+    tableBtn.addEventListener("click", () => {
+      tableBtn.classList.add("active");
+      if (gridBtn) gridBtn.classList.remove("active");
+      tableContainer.classList.remove("hidden");
+      gridContainer.classList.add("hidden");
+    });
+  }
 
-  gridBtn.addEventListener("click", () => {
-    gridBtn.classList.add("active");
-    tableBtn.classList.remove("active");
-    gridContainer.classList.remove("hidden");
-    tableContainer.classList.add("hidden");
-  });
+  if (gridBtn && tableContainer && gridContainer) {
+    gridBtn.addEventListener("click", () => {
+      gridBtn.classList.add("active");
+      if (tableBtn) tableBtn.classList.remove("active");
+      gridContainer.classList.remove("hidden");
+      tableContainer.classList.add("hidden");
+    });
+  }
 }
 
 // Auto-switch inventory to card view on mobile, table view on desktop.
@@ -2621,6 +3270,7 @@ function enableSuggestionKeyboardNav(inputEl, suggestionsBoxEl) {
 
 // Thiết lập autocomplete cho một input tên xe (dùng chung)
 function bindModelAutocomplete(inputEl, suggestionsBoxEl, onSelect) {
+  if (!inputEl || !suggestionsBoxEl) return;
   function showSuggestions() {
     renderModelSuggestions(suggestionsBoxEl, inputEl.value.trim(), onSelect);
   }
@@ -2680,6 +3330,7 @@ function setupEditTxAutocomplete() {
 function setupBrandAutocomplete() {
   const input = document.getElementById("buyBrand");
   const suggestionsBox = document.getElementById("buyBrandSuggestions");
+  if (!input || !suggestionsBox) return;
 
   function showSuggestions() {
     const val = input.value.trim().toLowerCase();
@@ -2870,6 +3521,7 @@ function setupSellFormWatcher(inventoryList) {
   const stockLabel = document.getElementById("sellStockLabel");
   const sellQtyInput = document.getElementById("sellQty");
   const sellPriceInput = document.getElementById("sellUnitPrice");
+  if (!select || !sellPriceInput) return;
 
   select.addEventListener("change", () => {
     const val = select.value;
@@ -2934,6 +3586,7 @@ function setupSellAutocomplete() {
   const textInput = document.getElementById("sellModelInput");
   const hiddenInput = document.getElementById("sellModelSelect");
   const suggestionsBox = document.getElementById("sellModelSuggestions");
+  if (!textInput || !hiddenInput || !suggestionsBox) return;
 
   function clearSelection() {
     if (hiddenInput.value !== "") {
@@ -3232,7 +3885,8 @@ function setupFormSubmissions() {
   const sellForm = document.getElementById("sellForm");
 
   // FORM MUA HÀNG (BUY)
-  buyForm.addEventListener("submit", async (e) => {
+  if (buyForm) {
+    buyForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     
     const modelName = document.getElementById("buyModelName").value.trim();
@@ -3289,6 +3943,7 @@ function setupFormSubmissions() {
     alert(`Đã nhập thành công ${qty} chiếc ${modelName} vào kho!`);
     refreshApplicationData();
   });
+  }
 
   // Toggle UI field cho Shopee Revenue
   const sellChannelEl = document.getElementById("sellChannel");
@@ -3296,25 +3951,30 @@ function setupFormSubmissions() {
   const unitPriceLabel = document.getElementById("sellUnitPriceLabel");
 
   function applySellChannelUI(channel) {
+    if (!taxGroupEl || !unitPriceLabel) return;
     if (channel === "Shopee") {
       taxGroupEl.style.display = "block";
       unitPriceLabel.innerHTML = 'Lợi nhuận thực tế / chiếc <span class="required">*</span>';
     } else {
       taxGroupEl.style.display = "none";
       unitPriceLabel.innerHTML = 'Giá bán / chiếc <span class="required">*</span>';
-      document.getElementById("sellTaxUnitPrice").value = "";
+      const taxInput = document.getElementById("sellTaxUnitPrice");
+      if (taxInput) taxInput.value = "";
     }
   }
 
-  sellChannelEl.addEventListener("change", (e) => {
-    applySellChannelUI(e.target.value);
-  });
+  if (sellChannelEl) {
+    sellChannelEl.addEventListener("change", (e) => {
+      applySellChannelUI(e.target.value);
+    });
 
-  // Áp dụng ngay khi khởi tạo (vì populateChannelSelects set Shopee bằng JS, không fire "change")
-  applySellChannelUI(sellChannelEl.value);
+    // Áp dụng ngay khi khởi tạo (vì populateChannelSelects set Shopee bằng JS, không fire "change")
+    applySellChannelUI(sellChannelEl.value);
+  }
 
   // FORM BÁN HÀNG (SELL)
-  sellForm.addEventListener("submit", (e) => {
+  if (sellForm) {
+    sellForm.addEventListener("submit", (e) => {
     e.preventDefault();
 
     const modelSelectVal = document.getElementById("sellModelSelect").value;
@@ -3401,6 +4061,7 @@ function setupFormSubmissions() {
     alert(`Đã ghi nhận bán thành công ${qty} chiếc ${modelName}!`);
     refreshApplicationData();
   });
+  }
 }
 
 // Xử lý submit Form Trả hàng (return_buy / return_sell)
@@ -3546,45 +4207,54 @@ function setupPortfolioActions() {
   const newNameInput = document.getElementById("newPortfolioNameInput");
 
   // Sự kiện đổi danh mục hoạt động
-  select.addEventListener("change", () => {
-    state.activePortfolioId = select.value;
-    dbSaveSettings();
-    refreshApplicationData();
-  });
+  if (select) {
+    select.addEventListener("change", () => {
+      state.activePortfolioId = select.value;
+      dbSaveSettings();
+      refreshApplicationData();
+    });
+  }
 
   // Sự kiện nút cộng nhanh ở sidebar chuyển sang tab Cài đặt
-  quickAddBtn.addEventListener("click", () => {
-    const settingsLink = document.querySelector('.nav-link[data-tab="settings"]');
-    if (settingsLink) {
-      settingsLink.click();
-      setTimeout(() => {
-        newNameInput.focus();
-      }, 200);
-    }
-  });
+  if (quickAddBtn) {
+    quickAddBtn.addEventListener("click", () => {
+      const settingsLink = document.querySelector('.nav-link[data-tab="settings"]');
+      if (settingsLink) {
+        settingsLink.click();
+        if (newNameInput) {
+          setTimeout(() => {
+            newNameInput.focus();
+          }, 200);
+        }
+      }
+    });
+  }
 
   // Xử lý tạo danh mục mới
-  createNewBtn.addEventListener("click", () => {
-    const name = newNameInput.value.trim();
-    if (!name) {
-      alert("Vui lòng nhập tên danh mục!");
-      return;
-    }
+  if (createNewBtn) {
+    createNewBtn.addEventListener("click", () => {
+      if (!newNameInput) return;
+      const name = newNameInput.value.trim();
+      if (!name) {
+        alert("Vui lòng nhập tên danh mục!");
+        return;
+      }
 
-    const newId = generateUniqueId("p");
-    state.portfolios.push({ id: newId, name: name });
-    state.transactions[newId] = [];
-    state.activePortfolioId = newId;
-    
-    dbSavePortfolio({ id: newId, name: name });
-    dbSaveSettings();
-    newNameInput.value = "";
-    
-    alert(`Đã tạo thành công danh mục: "${name}" và chuyển sang danh mục này.`);
-    
-    renderPortfolioSelectors();
-    refreshApplicationData();
-  });
+      const newId = generateUniqueId("p");
+      state.portfolios.push({ id: newId, name: name });
+      state.transactions[newId] = [];
+      state.activePortfolioId = newId;
+      
+      dbSavePortfolio({ id: newId, name: name });
+      dbSaveSettings();
+      newNameInput.value = "";
+      
+      alert(`Đã tạo thành công danh mục: "${name}" và chuyển sang danh mục này.`);
+      
+      renderPortfolioSelectors();
+      refreshApplicationData();
+    });
+  }
 }
 
 // Xóa danh mục đầu tư
@@ -3663,7 +4333,7 @@ function setupCsvExport() {
     document.body.removeChild(link);
   }
 
-  exportBtn.addEventListener("click", exportCsvProcess);
+  if (exportBtn) exportBtn.addEventListener("click", exportCsvProcess);
   if (reportExportBtn) reportExportBtn.addEventListener("click", exportCsvProcess);
 }
 
@@ -3671,12 +4341,13 @@ function setupCsvExport() {
 function setupCsvImport() {
   const fileInput = document.getElementById("importCsvFile");
   const fileNameSpan = document.getElementById("importCsvFileName");
+  if (!fileInput) return;
 
   fileInput.addEventListener("change", (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    fileNameSpan.innerText = file.name;
+    if (fileNameSpan) fileNameSpan.innerText = file.name;
 
     const reader = new FileReader();
     reader.onload = function(evt) {
@@ -3871,59 +4542,67 @@ function setupSystemSettings() {
   const currencySelect = document.getElementById("currencySelect");
 
   // Nạp dữ liệu mô phỏng từ mock_db.js
-  loadMockBtn.addEventListener("click", () => {
-    if (!confirm("Bạn có muốn ghi đè dữ liệu mô phỏng (2024-2026) vào danh mục này để dùng thử phần mềm?")) {
-      return;
-    }
+  if (loadMockBtn) {
+    loadMockBtn.addEventListener("click", () => {
+      if (!confirm("Bạn có muốn ghi đè dữ liệu mô phỏng (2024-2026) vào danh mục này để dùng thử phần mềm?")) {
+        return;
+      }
 
-    // Copy toàn bộ dữ liệu mẫu
-    state.transactions[state.activePortfolioId] = JSON.parse(JSON.stringify(MOCK_TRANSACTIONS));
-    dbReplaceTransactions(state.activePortfolioId, state.transactions[state.activePortfolioId]);
-    refreshApplicationData();
-    alert("Đã tải dữ liệu mô phỏng thành công! Hãy xem biểu đồ ở phần Tổng Quan và Báo Cáo Năm.");
-    
-    // Tự chuyển sang tab Dashboard để coi biểu đồ luôn
-    const dbLink = document.querySelector('.nav-link[data-tab="dashboard"]');
-    if (dbLink) dbLink.click();
-  });
+      // Copy toàn bộ dữ liệu mẫu
+      state.transactions[state.activePortfolioId] = JSON.parse(JSON.stringify(MOCK_TRANSACTIONS));
+      dbReplaceTransactions(state.activePortfolioId, state.transactions[state.activePortfolioId]);
+      refreshApplicationData();
+      alert("Đã tải dữ liệu mô phỏng thành công! Hãy xem biểu đồ ở phần Tổng Quan và Báo Cáo Năm.");
+      
+      // Tự chuyển sang tab Dashboard để coi biểu đồ luôn
+      const dbLink = document.querySelector('.nav-link[data-tab="dashboard"]');
+      if (dbLink) dbLink.click();
+    });
+  }
 
   // Xóa toàn bộ dữ liệu
-  clearDataBtn.addEventListener("click", () => {
-    if (!confirm("CẢNH BÁO NGUY HIỂM: Bạn có chắc muốn XÓA VĨNH VIỄN toàn bộ danh mục và tất cả lịch sử giao dịch? Hành động này không thể hoàn tác!")) {
-      return;
-    }
+  if (clearDataBtn) {
+    clearDataBtn.addEventListener("click", () => {
+      if (!confirm("CẢNH BÁO NGUY HIỂM: Bạn có chắc muốn XÓA VĨNH VIỄN toàn bộ danh mục và tất cả lịch sử giao dịch? Hành động này không thể hoàn tác!")) {
+        return;
+      }
 
-    state = {
-      portfolios: [{ id: "p-default", name: "Bộ sưu tập cá nhân" }],
-      activePortfolioId: "p-default",
-      transactions: { "p-default": [] },
-      currency: "VND",
-      feeSettings: state.feeSettings || { fee: 25, extra: 4620, operation: 5000 }
-    };
+      state = {
+        portfolios: [{ id: "p-default", name: "Bộ sưu tập cá nhân" }],
+        activePortfolioId: "p-default",
+        transactions: { "p-default": [] },
+        currency: "VND",
+        feeSettings: state.feeSettings || { fee: 25, extra: 4620, operation: 5000 }
+      };
 
-    dbDeletePortfolio("__ALL__"); // signal xóa tất cả — Apps Script xử lý
-    dbSavePortfolio({ id: "p-default", name: "Bộ sưu tập cá nhân" });
-    dbSaveSettings();
-    saveStateToLocalStorage();
-    renderPortfolioSelectors();
-    refreshApplicationData();
-    
-    alert("Đã xóa sạch toàn bộ cơ sở dữ liệu về trạng thái trống ban đầu.");
-  });
+      dbDeletePortfolio("__ALL__"); // signal xóa tất cả — Apps Script xử lý
+      dbSavePortfolio({ id: "p-default", name: "Bộ sưu tập cá nhân" });
+      dbSaveSettings();
+      saveStateToLocalStorage();
+      renderPortfolioSelectors();
+      refreshApplicationData();
+      
+      alert("Đã xóa sạch toàn bộ cơ sở dữ liệu về trạng thái trống ban đầu.");
+    });
+  }
 
   // Thay đổi loại tiền tệ hiển thị
-  currencySelect.addEventListener("change", () => {
-    state.currency = currencySelect.value;
-    dbSaveSettings();
-    
-    // Cập nhật text đơn vị trong Form nhập
-    const symbol = state.currency === "VND" ? "vnd" : (state.currency === "USD" ? "$" : "€");
-    document.getElementById("buyCurrencyAddon").innerText = symbol;
-    document.getElementById("sellCurrencyAddon").innerText = symbol;
-    const returnLossAddon = document.getElementById("returnLossCurrencyAddon");
-    if (returnLossAddon) returnLossAddon.innerText = symbol;
-    refreshApplicationData();
-  });
+  if (currencySelect) {
+    currencySelect.addEventListener("change", () => {
+      state.currency = currencySelect.value;
+      dbSaveSettings();
+      
+      // Cập nhật text đơn vị trong Form nhập
+      const symbol = state.currency === "VND" ? "vnd" : (state.currency === "USD" ? "$" : "€");
+      const buyAddon = document.getElementById("buyCurrencyAddon");
+      if (buyAddon) buyAddon.innerText = symbol;
+      const sellAddon = document.getElementById("sellCurrencyAddon");
+      if (sellAddon) sellAddon.innerText = symbol;
+      const returnLossAddon = document.getElementById("returnLossCurrencyAddon");
+      if (returnLossAddon) returnLossAddon.innerText = symbol;
+      refreshApplicationData();
+    });
+  }
 }
 
 // --- KHỞI CHẠY MOBILE TOGGLE ---
@@ -4049,11 +4728,15 @@ function setupBuyImageUpload() {
     preview.innerHTML = `<img src="${URL.createObjectURL(file)}" alt="preview" style="width:100%;height:100%;object-fit:cover;">`;
     fileInput._selectedFile = file;
   });
-  clearBtn.addEventListener("click", () => {
-    fileInput.value = ""; fileInput._selectedFile = null;
-    preview.innerHTML = `<i data-lucide="image" style="width:28px;height:28px;color:var(--text-muted);"></i><span style="font-size:11px;color:var(--text-muted);margin-top:4px;">Chưa chọn ảnh</span>`;
-    lucide.createIcons();
-  });
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      fileInput.value = ""; fileInput._selectedFile = null;
+      if (preview) {
+        preview.innerHTML = `<i data-lucide="image" style="width:28px;height:28px;color:var(--text-muted);"></i><span style="font-size:11px;color:var(--text-muted);margin-top:4px;">Chưa chọn ảnh</span>`;
+        if (window.lucide) lucide.createIcons();
+      }
+    });
+  }
 }
 
 async function saveBuyFormImage(modelName, brand, color = "", packaging = "") {
@@ -4100,6 +4783,9 @@ function refreshApplicationData() {
 
   // 2. Render các bảng dữ liệu tĩnh
   renderKPIs(kpis);
+  renderSmartAlerts(inventory, kpis);
+  renderTopActions(inventory, kpis);
+  renderFinancialAssistant(inventory, kpis);
   renderPeriodProfits(periodProfits);
   renderTopModelsTable(inventory);
   renderSlowModelsTable(inventory);
@@ -4119,6 +4805,7 @@ function refreshApplicationData() {
 
   // 4. Vẽ lại các biểu đồ đồ họa
   updateYearlyRevenueKPI();
+  drawMonthlyRevenueChart(activeId);
   drawYoYReportChart(yearlyStats);
   drawChannelChart(activeId);
   drawBrandChart(inventory);
@@ -4139,6 +4826,7 @@ function triggerChartsRefresh() {
 
   // Vẽ lại đồng loạt
   updateYearlyRevenueKPI();
+  drawMonthlyRevenueChart(activeId);
   drawYoYReportChart(yearlyStats);
   drawChannelChart(activeId);
   drawBrandChart(inventory);
@@ -4148,36 +4836,54 @@ function triggerChartsRefresh() {
 // Thiết lập các bộ lọc tương tác trực tiếp ở màn hình Kho hàng & Lịch sử
 function setupInteractiveFilters() {
   // Bộ lọc ở kho hàng
-  document.getElementById("inventorySearchInput").addEventListener("input", () => {
-    const inventory = calculateInventory(state.activePortfolioId);
-    renderInventoryTable(inventory);
-  });
+  const invSearch = document.getElementById("inventorySearchInput");
+  if (invSearch) {
+    invSearch.addEventListener("input", () => {
+      const inventory = calculateInventory(state.activePortfolioId);
+      renderInventoryTable(inventory);
+    });
+  }
   
-  document.getElementById("filterBrandSelect").addEventListener("change", () => {
-    const inventory = calculateInventory(state.activePortfolioId);
-    renderInventoryTable(inventory);
-  });
+  const filterBrand = document.getElementById("filterBrandSelect");
+  if (filterBrand) {
+    filterBrand.addEventListener("change", () => {
+      const inventory = calculateInventory(state.activePortfolioId);
+      renderInventoryTable(inventory);
+    });
+  }
 
-  document.getElementById("filterStockSelect").addEventListener("change", () => {
-    const inventory = calculateInventory(state.activePortfolioId);
-    renderInventoryTable(inventory);
-  });
+  const filterStock = document.getElementById("filterStockSelect");
+  if (filterStock) {
+    filterStock.addEventListener("change", () => {
+      const inventory = calculateInventory(state.activePortfolioId);
+      renderInventoryTable(inventory);
+    });
+  }
 
-  document.getElementById("sortSelect").addEventListener("change", () => {
-    const inventory = calculateInventory(state.activePortfolioId);
-    renderInventoryTable(inventory);
-  });
+  const sortSel = document.getElementById("sortSelect");
+  if (sortSel) {
+    sortSel.addEventListener("change", () => {
+      const inventory = calculateInventory(state.activePortfolioId);
+      renderInventoryTable(inventory);
+    });
+  }
 
   // Bộ lọc ở bảng lịch sử giao dịch
-  document.getElementById("historyFilterType").addEventListener("change", () => {
-    const inventory = calculateInventory(state.activePortfolioId);
-    renderTransactionHistoryTable(state.activePortfolioId, inventory);
-  });
+  const histFilterType = document.getElementById("historyFilterType");
+  if (histFilterType) {
+    histFilterType.addEventListener("change", () => {
+      const inventory = calculateInventory(state.activePortfolioId);
+      renderTransactionHistoryTable(state.activePortfolioId, inventory);
+    });
+  }
 
-  document.getElementById("historyFilterYear").addEventListener("change", () => {
-    const inventory = calculateInventory(state.activePortfolioId);
-    renderTransactionHistoryTable(state.activePortfolioId, inventory);
-  });
+  const histFilterYear = document.getElementById("historyFilterYear");
+  if (histFilterYear) {
+    histFilterYear.addEventListener("change", () => {
+      const inventory = calculateInventory(state.activePortfolioId);
+      renderTransactionHistoryTable(state.activePortfolioId, inventory);
+    });
+  }
 
   const historyFilterChannelEl = document.getElementById("historyFilterChannel");
   if (historyFilterChannelEl) {
@@ -4359,7 +5065,9 @@ function getStartOfWeek(dateObj) {
 
 // Vẽ biểu đồ xu hướng lợi nhuận ròng
 function drawProfitTrendChart(portfolioId, inventoryList) {
-  const ctx = document.getElementById("profitTrendChart").getContext("2d");
+  const canvas = document.getElementById("profitTrendChart");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
   if (charts.profitTrendChart) charts.profitTrendChart.destroy();
 
   const txs = state.transactions[portfolioId] || [];
@@ -4685,27 +5393,32 @@ function setupEditTxModalHandlers() {
   const closeBtn = document.getElementById("closeEditModalBtn");
   const cancelBtn = document.getElementById("cancelEditModalBtn");
   const priceInput = document.getElementById("editTxPrice");
+  const modal = document.getElementById("editTxModal");
 
   if (!form) return;
 
-  closeBtn.onclick = () => closeEditTxModal();
-  cancelBtn.onclick = () => closeEditTxModal();
+  if (closeBtn) closeBtn.onclick = () => closeEditTxModal();
+  if (cancelBtn) cancelBtn.onclick = () => closeEditTxModal();
 
-  document.getElementById("editTxModal").onclick = (e) => {
-    if (e.target.id === "editTxModal") closeEditTxModal();
-  };
+  if (modal) {
+    modal.onclick = (e) => {
+      if (e.target.id === "editTxModal") closeEditTxModal();
+    };
+  }
 
-  priceInput.addEventListener("input", (e) => {
-    const selectionStart = e.target.selectionStart;
-    const originalLength = e.target.value.length;
-    
-    const formatted = formatNumberInput(e.target.value);
-    e.target.value = formatted;
-    
-    const newLength = formatted.length;
-    const newCursorPos = selectionStart + (newLength - originalLength);
-    e.target.setSelectionRange(newCursorPos, newCursorPos);
-  });
+  if (priceInput) {
+    priceInput.addEventListener("input", (e) => {
+      const selectionStart = e.target.selectionStart;
+      const originalLength = e.target.value.length;
+      
+      const formatted = formatNumberInput(e.target.value);
+      e.target.value = formatted;
+      
+      const newLength = formatted.length;
+      const newCursorPos = selectionStart + (newLength - originalLength);
+      e.target.setSelectionRange(newCursorPos, newCursorPos);
+    });
+  }
 
   form.onsubmit = (e) => {
     e.preventDefault();
@@ -4981,7 +5694,8 @@ function sumFeeVanHanh() {
 // Khởi tạo bộ tính Shopee: nạp giá trị đã lưu vào các ô
 function initShopeeCalc() {
   const s = state.feeSettings || { fee: 25, extra: 4620, operation: 5000, targetMargin: 10 };
-  document.getElementById("calcFee").value = s.fee;
+  const calcFeeEl = document.getElementById("calcFee");
+  if (calcFeeEl) calcFeeEl.value = s.fee;
   const tmEl = document.getElementById("calcTargetMargin");
   if (tmEl) tmEl.value = s.targetMargin !== undefined ? s.targetMargin : 10;
 
@@ -5569,20 +6283,23 @@ function openTaxDeclarationDetail(id) {
   const initialChannels = decl.salesChannels || decl.salesChannel || 'all';
   renderTaxChannelSelector(initialChannels);
 
-  document.getElementById('taxDetailPeriodError').style.display = 'none';
+  const errEl = document.getElementById('taxDetailPeriodError');
+  if (errEl) errEl.style.display = 'none';
 
   // Cách ghi sổ: mặc định "periodic" (giữ nguyên hành vi cũ) nếu chưa từng chọn
   const exportStyleSelect = document.getElementById('taxExportStyle');
-  exportStyleSelect.value = decl.exportStyle || 'periodic';
-  // Lưu ngay khi người dùng đổi lựa chọn, không cần đợi bấm "Xuất dữ liệu"
-  if (!exportStyleSelect.dataset.bound) {
-    exportStyleSelect.dataset.bound = '1';
-    exportStyleSelect.addEventListener('change', () => {
-      const currentDecl = ((state.tax && state.tax.declarations) || []).find(d => d.id === _activeTaxDeclarationId);
-      if (!currentDecl) return;
-      currentDecl.exportStyle = exportStyleSelect.value;
-      saveStateToLocalStorage();
-    });
+  if (exportStyleSelect) {
+    exportStyleSelect.value = decl.exportStyle || 'periodic';
+    // Lưu ngay khi người dùng đổi lựa chọn, không cần đợi bấm "Xuất dữ liệu"
+    if (!exportStyleSelect.dataset.bound) {
+      exportStyleSelect.dataset.bound = '1';
+      exportStyleSelect.addEventListener('change', () => {
+        const currentDecl = ((state.tax && state.tax.declarations) || []).find(d => d.id === _activeTaxDeclarationId);
+        if (!currentDecl) return;
+        currentDecl.exportStyle = exportStyleSelect.value;
+        saveStateToLocalStorage();
+      });
+    }
   }
 
   // Init datepickers cho detail view nếu chưa được init
@@ -6614,6 +7331,215 @@ function removeTaxTemplate() {
   renderTaxConfig();
 }
 
+// ================= GEMINI AI FINANCIAL ASSISTANT MODULE =================
+const AIAssistant = (function() {
+  const API_KEY_STORAGE = "gemini_api_key";
+  
+  function getApiKey() {
+    return localStorage.getItem(API_KEY_STORAGE) || "";
+  }
+  
+  function saveApiKey(key) {
+    localStorage.setItem(API_KEY_STORAGE, key || "");
+  }
+  
+  function buildFinancialContext() {
+    const inventory = calculateInventory(state.activePortfolioId) || [];
+    const kpis = calculateKPIs(inventory, state.activePortfolioId) || {};
+    
+    // 1. Tự động lấy TẤT CẢ các kênh bán hàng đang có và thống kê dữ liệu
+    const channelData = {};
+    const channels = typeof getChannels === "function" ? getChannels() : [];
+    channels.forEach(ch => { channelData[ch] = { rev: 0, qty: 0 }; });
+
+    const txs = (state.transactions && state.transactions[state.activePortfolioId]) || [];
+    txs.filter(tx => tx.type === "sell").forEach(tx => {
+      const ch = tx.channel || "Trực tiếp";
+      if (!channelData[ch]) channelData[ch] = { rev: 0, qty: 0 };
+      channelData[ch].rev += (Number(tx.qty || 0) * Number(tx.unitPrice || 0));
+      channelData[ch].qty += Number(tx.qty || 0);
+    });
+
+    let channelStats = [];
+    Object.keys(channelData).forEach(ch => {
+      const data = channelData[ch] || { rev: 0, qty: 0 };
+      if (data.qty > 0) {
+        channelStats.push(`${ch}: ${data.qty} chiếc, doanh thu ${formatCurrency(data.rev)}`);
+      }
+    });
+
+    // 2. Tự động lấy top 3 xe bán chạy
+    const topSellers = inventory.filter(i => i.totalSold > 0)
+      .sort((a,b) => b.totalSold - a.totalSold).slice(0, 3)
+      .map(i => `${i.modelName} (${i.brand || "Khác"}): bán ${i.totalSold} chiếc, lãi ${formatCurrency(i.realizedProfit)}`);
+
+    // 3. Tự động lấy top 3 xe tồn lâu
+    const today = new Date();
+    const stagnant = inventory.filter(i => i.stock > 0)
+      .map(i => {
+        const days = Math.floor((today - (i.oldestStockDate || today)) / 86400000);
+        return { ...i, days };
+      }).sort((a,b) => b.days - a.days).slice(0, 3)
+      .map(i => `${i.modelName} (${i.brand || "Khác"}): tồn ${i.stock} chiếc, lâu ${i.days} ngày`);
+
+    const affRev = kpis.totalAffiliateRevenue || 0;
+    const carRev = kpis.totalRevenue || 0;
+    const roiVal = (kpis.roi != null) ? kpis.roi.toFixed(1) : "0.0";
+
+    // 4. Gom tất cả lại thành 1 đoạn văn bản hoàn chỉnh
+    return `
+  === DỮ LIỆU TỔNG QUAN ===
+  - Tổng doanh thu: ${formatCurrency(carRev + affRev)} (Bán xe: ${formatCurrency(carRev)}, Affiliate: ${formatCurrency(affRev)})
+  - Lợi nhuận ròng: ${formatCurrency(kpis.realizedProfit || 0)} (ROI: ${roiVal}%)
+  - Dòng tiền ròng: ${formatCurrency(kpis.netCashFlow || 0)}
+  - Tổng giá trị tồn kho: ${formatCurrency(kpis.totalInventoryValue || 0)} (${kpis.stockCount || 0} chiếc)
+
+  === HIỆU QUẢ KÊNH BÁN ===
+  ${channelStats.length > 0 ? channelStats.join('\n  ') : 'Chưa có dữ liệu bán hàng'}
+
+  === TOP XE BÁN CHẠY ===
+  ${topSellers.length > 0 ? topSellers.join('\n  ') : 'Chưa có dữ liệu'}
+
+  === XE TỒN ĐỌNG CẦN XỬ LÝ ===
+  ${stagnant.length > 0 ? stagnant.join('\n  ') : 'Không có xe tồn lâu'}
+  `;
+  }
+  
+  async function ask(question, previousText = null) {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      appendMessage("assistant", "Vui lòng vào 'Cài đặt API' để nhập API Key Gemini miễn phí trước khi hỏi.");
+      return;
+    }
+    if (!previousText) {
+      appendMessage("user", question);
+    }
+    appendMessage("assistant", "Đang suy nghĩ...");
+    
+    const context = buildFinancialContext();
+    const payload = { question, context, apiKey };
+    if (previousText) {
+      payload.previousText = previousText;
+    }
+
+    try {
+      const res = await rawApiPost("askGeminiAI", payload);
+      // Xóa tin nhắn "Đang suy nghĩ..."
+      const messages = document.getElementById("aiChatMessages");
+      if (messages && messages.lastChild) messages.removeChild(messages.lastChild);
+      
+      if (res && res.error) {
+        appendMessage("assistant", "Lỗi: " + res.error);
+      } else if (res && res.answer) {
+        appendMessage("assistant", res.answer, !!previousText);
+      } else {
+        appendMessage("assistant", "Không nhận được phản hồi từ AI.");
+      }
+    } catch (err) {
+      const messages = document.getElementById("aiChatMessages");
+      if (messages && messages.lastChild && messages.lastChild.textContent === "Đang suy nghĩ...") {
+        messages.removeChild(messages.lastChild);
+      }
+      appendMessage("assistant", "Lỗi kết nối: " + err.message);
+    }
+  }
+  
+  function appendMessage(role, text, isContinuation = false) {
+    const container = document.getElementById("aiChatMessages");
+    if (!container) return;
+    const div = document.createElement("div");
+    div.style.cssText = "padding:10px 14px; border-radius:12px; max-width:85%; white-space:pre-wrap; line-height:1.55; " + 
+      (role === "user" ? "background:var(--primary); color:white; align-self:flex-end;" : "background:var(--bg-lighter, #1a2236); color:var(--text-main, #e2e8f0); align-self:flex-start; border:1px solid rgba(255,255,255,0.08);");
+    
+    const textNode = document.createElement("div");
+    textNode.textContent = text;
+    div.appendChild(textNode);
+
+    if (role === "assistant" && text !== "Đang suy nghĩ..." && !text.startsWith("Lỗi:") && !text.startsWith("Vui lòng")) {
+      const continueBtn = document.createElement("button");
+      continueBtn.className = "btn-continue";
+      continueBtn.type = "button";
+      continueBtn.textContent = "Viết tiếp ➡️";
+      continueBtn.addEventListener("click", () => {
+        continueBtn.remove();
+        ask("Tiếp tục", text);
+      });
+      div.appendChild(continueBtn);
+    }
+
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+  }
+  
+  let initialized = false;
+  function init() {
+    if (initialized) return;
+    const sendBtn = document.getElementById("aiChatSendBtn");
+    const input = document.getElementById("aiChatInput");
+    if (!sendBtn || !input) return;
+    initialized = true;
+
+    sendBtn.addEventListener("click", () => {
+      const q = input.value.trim();
+      if (!q) return;
+      input.value = "";
+      ask(q);
+    });
+    input.addEventListener("keypress", (e) => {
+      if (e.key === "Enter") {
+        sendBtn.click();
+      }
+    });
+
+    document.querySelectorAll(".ai-suggestion-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const q = btn.getAttribute("data-q");
+        if (q) ask(q);
+      });
+    });
+  }
+  
+  return { init, ask };
+})();
+window.AIAssistant = AIAssistant;
+
+// Đảm bảo AIAssistant luôn được khởi tạo kể cả khi script tải sau sự kiện DOMContentLoaded
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => {
+    if (window.AIAssistant) window.AIAssistant.init();
+  });
+} else {
+  setTimeout(() => {
+    if (window.AIAssistant) window.AIAssistant.init();
+  }, 0);
+}
+
+// Các hàm global cho nút Cài đặt API
+window.openGeminiSettings = function() {
+  const modal = document.getElementById("geminiSettingsModal");
+  const input = document.getElementById("geminiApiKeyInput");
+  if (modal && input) {
+    input.value = localStorage.getItem("gemini_api_key") || "";
+    modal.classList.remove("hidden");
+    setTimeout(() => input.focus(), 100);
+  }
+  if (window.lucide) lucide.createIcons();
+};
+
+window.closeGeminiSettings = function() {
+  const modal = document.getElementById("geminiSettingsModal");
+  if (modal) modal.classList.add("hidden");
+};
+
+window.saveGeminiApiKey = function() {
+  const input = document.getElementById("geminiApiKeyInput");
+  if (input) {
+    localStorage.setItem("gemini_api_key", input.value.trim());
+    window.closeGeminiSettings();
+    alert("Đã lưu API Key!");
+  }
+};
+
 window.addEventListener("DOMContentLoaded", async () => {
   // Khởi tạo các bộ chọn ngày tùy chỉnh (lịch tiếng Việt, định dạng dd/mm/yyyy)
   window.datePickers = {
@@ -6636,10 +7562,13 @@ window.addEventListener("DOMContentLoaded", async () => {
   await loadData();
   
   // Đồng bộ giá trị tiền tệ đã lưu lên dropdown chọn
-  document.getElementById("currencySelect").value = state.currency;
+  const currSelect = document.getElementById("currencySelect");
+  if (currSelect) currSelect.value = state.currency;
   const symbol = state.currency === "VND" ? "vnd" : (state.currency === "USD" ? "$" : "€");
-  document.getElementById("buyCurrencyAddon").innerText = symbol;
-  document.getElementById("sellCurrencyAddon").innerText = symbol;
+  const buyCurrencyAddon = document.getElementById("buyCurrencyAddon");
+  if (buyCurrencyAddon) buyCurrencyAddon.innerText = symbol;
+  const sellCurrencyAddon = document.getElementById("sellCurrencyAddon");
+  if (sellCurrencyAddon) sellCurrencyAddon.innerText = symbol;
   const returnLossAddonInit = document.getElementById("returnLossCurrencyAddon");
   if (returnLossAddonInit) returnLossAddonInit.innerText = symbol;
   setupInputFormatting(); // Kích hoạt tự động định dạng khi gõ tiền
@@ -6676,6 +7605,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   
   setupProfitChartPeriodToggle(); // Kích hoạt bộ lọc biểu đồ lợi nhuận
   setupEditTxModalHandlers();    // Kích hoạt bộ chỉnh sửa Modal
+  setupAssistantChips();         // Kích hoạt các nút chip trợ lý tài chính Dashboard
 
   // 3. Tính toán và làm tươi dữ liệu ban đầu
   refreshApplicationData();
@@ -6684,6 +7614,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   if (window.TrackingModule && typeof window.TrackingModule.autoCheckOnStartup === 'function') {
     window.TrackingModule.autoCheckOnStartup();
   }
+
+  // Khởi tạo Trợ lý Tài chính AI Gemini
+  if (window.AIAssistant) window.AIAssistant.init();
 });
 
 // --- BOTTOM NAVIGATION (mobile) ---
